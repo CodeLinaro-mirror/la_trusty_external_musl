@@ -4,6 +4,8 @@
 #include <features.h>
 #include <stdint.h>
 
+#pragma clang system_header
+
 static __inline uint16_t __bswap_16(uint16_t __x)
 {
 	return __x<<8 | __x>>8;
