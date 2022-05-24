@@ -70,6 +70,12 @@ typedef double stdio_float;
 #define MAX(a,b) ((a)>(b) ? (a) : (b))
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
 
+/*
+ * TRUSTY - Macro used to determine if an integer number should
+ * not be printed.
+ */
+#define SHOULD_FILTER_NUMBER(num) (((num) > 4096) && ((num) < (uintptr_t)-4096))
+
 /* Convenient bit representation for modifier flags, which all fall
  * within 31 codepoints of the space character. */
 
@@ -208,6 +214,19 @@ static void pad(FILE *f, char c, int w, int l, int fl)
 static const char xdigits[16] = {
 	"0123456789ABCDEF"
 };
+
+/*
+ * TRUSTY - This is the function used to return what will
+ * be printed if a number value shouldn't be shown.
+ */
+static char *fmt_filter(uintmax_t x, char *s)
+{
+	/* ignoring x value on this
+	 * implementation, always
+	 * filtering with ***.*/
+	for (x = 0; x < 3; x++) *--s = '*';
+	return s;
+}
 
 static char *fmt_x(uintmax_t x, char *s, int lower)
 {
@@ -488,7 +507,7 @@ static int getint(char **s) {
 	return i;
 }
 
-static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg, int *nl_type)
+static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg, int *nl_type, int filtered_on_release)
 {
 	char *a, *z, *s=(char *)fmt;
 	unsigned l10n=0, fl;
@@ -501,12 +520,18 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 	char buf[sizeof(uintmax_t)*3+3+STDIO_MANT_DIG/4];
 	const char *prefix;
 	int t, pl;
+	int filter_curr_modifier;
 #if STDIO_NO_FORMAT_WIDE != 1
 	wchar_t wc[2], *ws;
 	char mb[4];
 #endif
 
 	for (;;) {
+#if RELEASE_BUILD
+		filter_curr_modifier = filtered_on_release;
+#else
+		filter_curr_modifier = 0;
+#endif
 		/* This error is only specified for snprintf, but since it's
 		 * unspecified for other forms, do the same. Stop immediately
 		 * on overflow; otherwise %n could produce wrong results. */
@@ -524,6 +549,8 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 		if (f) out(f, a, l);
 		if (l) continue;
 
+		/* $ is a non C standard specifier to
+		 * refer to an argument by position.*/
 		if (isdigit(s[1]) && s[2]=='$') {
 			l10n=1;
 			argpos = s[1]-'0';
@@ -534,6 +561,9 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 		}
 
 		/* Read modifier flags */
+		/* Code takes advantages that all flags fit on 32 bit to
+		 * represent each flag as a bit on a word, it will iterate
+		 * over the input until it cannot find another flag.*/
 		for (fl=0; (unsigned)*s-' '<32 && (FLAGMASK&(1U<<*s-' ')); s++)
 			fl |= 1U<<*s-' ';
 
@@ -572,6 +602,13 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 		}
 
 		/* Format specifier state machine */
+		/* Code uses a state machine to figure out how big a
+		 * specific argument is depending on its specifiers;
+		 * for example it is used to give different sizes if
+		 * an argument is tagged as lu (ULONG) vs u (UINT).
+		 * st = current state.
+		 * ps = previous state. Mainly used to figure out
+		 *      the size of a pointer for n*/
 		st=0;
 		do {
 			if (OOB(*s)) goto inval;
@@ -619,11 +656,23 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			t = 'x';
 			fl |= ALT_FORM;
 		case 'x': case 'X':
-			a = fmt_x(arg.i, z, t&32);
+			/* Only filter if number > +/-4096.*/
+			/*z is a reverse pointer to the char buffer 'buf'*/
+			if (filter_curr_modifier && SHOULD_FILTER_NUMBER(arg.i))
+			{
+				a = fmt_filter(arg.i, z);
+			} else {
+				a = fmt_x(arg.i, z, t&32);
+			}
 			if (arg.i && (fl & ALT_FORM)) prefix+=(t>>4), pl=2;
 			if (0) {
 		case 'o':
-			a = fmt_o(arg.i, z);
+			/* Only filter if number > +/-4096.*/
+			if (filter_curr_modifier && SHOULD_FILTER_NUMBER(arg.i)) {
+				a = fmt_filter(arg.i, z);
+			} else {
+				a = fmt_o(arg.i, z);
+			}
 			if ((fl&ALT_FORM) && p<z-a+1) p=z-a+1;
 			} if (0) {
 		case 'd': case 'i':
@@ -636,8 +685,20 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 				prefix+=2;
 			} else pl=0;
 		case 'u':
-			a = fmt_u(arg.i, z);
+			/* Only filter if number > +/-4096.*/
+			if (filter_curr_modifier && SHOULD_FILTER_NUMBER(arg.i)) {
+				/* Removing any (i.e. negative) prefix on filtered
+			 	 * int prints pl is the length of the prefix to be
+				 * printed.*/
+				pl = 0;
+				a = fmt_filter(arg.i, z);
+			} else {
+				a = fmt_u(arg.i, z);
 			}
+			}
+			/*xp and p are set by the set precision code.
+			 * xp: use precision
+			 * p: precision*/
 			if (xp && p<0) goto overflow;
 			if (xp) fl &= ~ZERO_PAD;
 			if (!arg.i && !p) {
@@ -741,7 +802,7 @@ overflow:
 	return -1;
 }
 
-int vfprintf(FILE *restrict f, const char *restrict fmt, va_list ap)
+int vfprintf_worker(FILE *restrict f, const char *restrict fmt, va_list ap, int filtered_on_release)
 {
 	va_list ap2;
 	int nl_type[NL_ARGMAX+1] = {0};
@@ -752,7 +813,7 @@ int vfprintf(FILE *restrict f, const char *restrict fmt, va_list ap)
 
 	/* the copy allows passing va_list* even if va_list is an array */
 	va_copy(ap2, ap);
-	if (printf_core(0, fmt, &ap2, nl_arg, nl_type) < 0) {
+	if (printf_core(0, fmt, &ap2, nl_arg, nl_type, filtered_on_release) < 0) {
 		va_end(ap2);
 		return -1;
 	}
@@ -767,7 +828,7 @@ int vfprintf(FILE *restrict f, const char *restrict fmt, va_list ap)
 		f->wpos = f->wbase = f->wend = 0;
 	}
 	if (!f->wend && __towrite(f)) ret = -1;
-	else ret = printf_core(f, fmt, &ap2, nl_arg, nl_type);
+	else ret = printf_core(f, fmt, &ap2, nl_arg, nl_type, filtered_on_release);
 	if (saved_buf) {
 		f->write(f, 0, 0);
 		if (!f->wpos) ret = -1;

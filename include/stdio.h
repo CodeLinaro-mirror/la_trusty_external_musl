@@ -109,11 +109,21 @@ int printf(const char *__restrict, ...);
 int fprintf(FILE *__restrict, const char *__restrict, ...);
 int sprintf(char *__restrict, const char *__restrict, ...);
 int snprintf(char *__restrict, size_t, const char *__restrict, ...);
+int snprintf_filtered(char *__restrict, size_t, const char *__restrict, ...);
 
 int vprintf(const char *__restrict, __isoc_va_list);
-int vfprintf(FILE *__restrict, const char *__restrict, __isoc_va_list);
+int vfprintf_worker(FILE *__restrict, const char *__restrict, __isoc_va_list, int);
+inline int vfprintf(FILE *__restrict f, const char *__restrict fmt, va_list ap)
+{
+	return vfprintf_worker(f, fmt, ap, 1);
+}
+inline int vfprintf_unfiltered(FILE *__restrict f, const char *__restrict fmt, va_list ap)
+{
+	return vfprintf_worker(f, fmt, ap, 0);
+}
 int vsprintf(char *__restrict, const char *__restrict, __isoc_va_list);
 int vsnprintf(char *__restrict, size_t, const char *__restrict, __isoc_va_list);
+int vsnprintf_filtered(char *__restrict, size_t, const char *__restrict, __isoc_va_list);
 
 int scanf(const char *__restrict, ...);
 int fscanf(FILE *__restrict, const char *__restrict, ...);

@@ -51,5 +51,27 @@ int vsnprintf(char *restrict s, size_t n, const char *restrict fmt, va_list ap)
 	}
 
 	*c.s = 0;
+	return vfprintf_unfiltered(&f, fmt, ap);
+}
+
+int vsnprintf_filtered(char *restrict s, size_t n, const char *restrict fmt, va_list ap)
+{
+	unsigned char buf[1];
+	char placeholder[1];
+	struct cookie c = { .s = n ? s : placeholder, .n = n ? n-1 : 0 };
+	FILE f = {
+		.lbf = EOF,
+		.write = sn_write,
+		.lock = -1,
+		.buf = buf,
+		.cookie = &c,
+	};
+
+	if (n > INT_MAX) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+
+	*c.s = 0;
 	return vfprintf(&f, fmt, ap);
 }
