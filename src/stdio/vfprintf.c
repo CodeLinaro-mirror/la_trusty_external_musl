@@ -78,7 +78,7 @@ typedef double stdio_float;
  * TRUSTY - Macro used to determine if an integer number should
  * not be printed.
  */
-#define SHOULD_FILTER_NUMBER(num) (((num) > 4096) && ((num) < (uintptr_t)-4096))
+#define NUMBER_IN_FILTER_RANGE(num) (((num) > 4096) && ((num) < (uintptr_t)-4096))
 
 /* Convenient bit representation for modifier flags, which all fall
  * within 31 codepoints of the space character. */
@@ -511,6 +511,42 @@ static int getint(char **s) {
 	return i;
 }
 
+static int should_filter_number(uintmax_t number, char **format_string, int filter_number, int use_filter_modifiers)
+{
+	char currChar;
+
+	/* We only filter numbers on a certain range
+	 * (a number outside of +/-4096 will be filtered).*/
+	filter_number = filter_number && NUMBER_IN_FILTER_RANGE(number);
+
+	/* We will check if we have an override filtering modifier.*/
+	currChar = **format_string;
+
+	/* This is a not filtered call, we should not "eat" the extra x.*/
+	if (!use_filter_modifiers) {
+		return filter_number;
+	}
+
+	if (currChar == 0) {
+		/* We were already at the end of the string.*/
+		return filter_number;
+	}
+	switch (currChar)
+	{
+		case 'x':
+			/* We really want to print this character.*/
+			filter_number = 0;
+			/* We are consuming this character, advance format string.*/
+			(*format_string)++;
+			break;
+		default:
+			/* We didn't understood the next character,
+			 * normal parsing code will take care of it.*/
+			break;
+	}
+	return filter_number;
+}
+
 static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg, int *nl_type, int filtered_on_release)
 {
 	char *a, *z, *s=(char *)fmt;
@@ -524,18 +560,20 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 	char buf[sizeof(uintmax_t)*3+3+STDIO_MANT_DIG/4];
 	const char *prefix;
 	int t, pl;
-	int filter_curr_modifier;
 #if STDIO_NO_FORMAT_WIDE != 1
 	wchar_t wc[2], *ws;
 	char mb[4];
 #endif
+	int use_filter_modifiers;
 
-	for (;;) {
-#if RELEASE_BUILD
-		filter_curr_modifier = filtered_on_release;
-#else
-		filter_curr_modifier = 0;
+	/* Keeping track if new filtering modifier (x) should be printed or not.*/
+	use_filter_modifiers = filtered_on_release;
+
+#if RELEASE_BUILD == 0
+	/* We are not on a release build, do not filter.*/
+	filtered_on_release = 0;
 #endif
+	for (;;) {
 		/* This error is only specified for snprintf, but since it's
 		 * unspecified for other forms, do the same. Stop immediately
 		 * on overflow; otherwise %n could produce wrong results. */
@@ -660,10 +698,8 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			t = 'x';
 			fl |= ALT_FORM;
 		case 'x': case 'X':
-			/* Only filter if number > +/-4096.*/
 			/*z is a reverse pointer to the char buffer 'buf'*/
-			if (filter_curr_modifier && SHOULD_FILTER_NUMBER(arg.i))
-			{
+			if (should_filter_number(arg.i, &s, filtered_on_release, use_filter_modifiers)) {
 				a = fmt_filter(arg.i, z);
 			} else {
 				a = fmt_x(arg.i, z, t&32);
@@ -671,8 +707,7 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			if (arg.i && (fl & ALT_FORM)) prefix+=(t>>4), pl=2;
 			if (0) {
 		case 'o':
-			/* Only filter if number > +/-4096.*/
-			if (filter_curr_modifier && SHOULD_FILTER_NUMBER(arg.i)) {
+			if (should_filter_number(arg.i, &s, filtered_on_release, use_filter_modifiers)) {
 				a = fmt_filter(arg.i, z);
 			} else {
 				a = fmt_o(arg.i, z);
@@ -689,8 +724,7 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 				prefix+=2;
 			} else pl=0;
 		case 'u':
-			/* Only filter if number > +/-4096.*/
-			if (filter_curr_modifier && SHOULD_FILTER_NUMBER(arg.i)) {
+			if (should_filter_number(arg.i, &s, filtered_on_release, use_filter_modifiers)) {
 				/* Removing any (i.e. negative) prefix on filtered
 			 	 * int prints pl is the length of the prefix to be
 				 * printed.*/
