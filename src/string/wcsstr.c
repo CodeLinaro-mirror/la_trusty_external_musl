@@ -1,7 +1,11 @@
 #include <wchar.h>
 
+#ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
+#ifndef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
+#endif
 
 static wchar_t *twoway_wcsstr(const wchar_t *h, const wchar_t *n)
 {

@@ -586,8 +586,9 @@ typedef struct tre_backtrack_struct {
     }									      \
   while (0)
 
-#undef MIN
+#ifndef MIN
 #define MIN(a, b) ((a) <= (b) ? (a) : (b))
+#endif
 
 static reg_errcode_t
 tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,

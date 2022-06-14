@@ -13,10 +13,12 @@
 #define DEV_BSIZE 512
 #define NOGROUP (-1)
 
-#undef MIN
-#undef MAX
+#ifndef MIN
 #define MIN(a,b) (((a)<(b))?(a):(b))
+#endif
+#ifndef MAX
 #define MAX(a,b) (((a)>(b))?(a):(b))
+#endif
 
 #define __bitop(x,i,o) ((x)[(i)/8] o (1<<(i)%8))
 #define setbit(x,i) __bitop(x,i,|=)

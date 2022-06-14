@@ -67,8 +67,12 @@ typedef double stdio_float;
 
 /* Some useful macros */
 
+#ifndef MAX
 #define MAX(a,b) ((a)>(b) ? (a) : (b))
+#endif
+#ifndef MIN
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
+#endif
 
 /*
  * TRUSTY - Macro used to determine if an integer number should

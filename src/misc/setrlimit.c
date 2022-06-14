@@ -3,7 +3,9 @@
 #include "syscall.h"
 #include "libc.h"
 
+#ifndef MIN
 #define MIN(a, b) ((a)<(b) ? (a) : (b))
+#endif
 #define FIX(x) do{ if ((x)>=SYSCALL_RLIM_INFINITY) (x)=RLIM_INFINITY; }while(0)
 
 static int __setrlimit(int resource, const struct rlimit *rlim)

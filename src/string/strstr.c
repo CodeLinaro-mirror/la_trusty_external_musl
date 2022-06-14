@@ -24,8 +24,12 @@ static char *fourbyte_strstr(const unsigned char *h, const unsigned char *n)
 	return *h ? (char *)h-3 : 0;
 }
 
+#ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
+#ifndef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
+#endif
 
 #define BITOP(a,b,op) \
  ((a)[(size_t)(b)/(8*sizeof *(a))] op (size_t)1<<((size_t)(b)%(8*sizeof *(a))))

@@ -9,7 +9,9 @@ struct cookie {
 	size_t n;
 };
 
+#ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
 
 static size_t sn_write(FILE *f, const unsigned char *s, size_t l)
 {

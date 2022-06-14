@@ -2,8 +2,12 @@
 #include "pthread_impl.h"
 #include <string.h>
 
+#ifndef MIN
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
+#endif
+#ifndef MAX
 #define MAX(a,b) ((a)>(b) ? (a) : (b))
+#endif
 
 int pthread_setattr_default_np(const pthread_attr_t *attrp)
 {

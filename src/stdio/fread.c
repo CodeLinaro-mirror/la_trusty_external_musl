@@ -1,7 +1,9 @@
 #include "stdio_impl.h"
 #include <string.h>
 
+#ifndef MIN
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
+#endif
 
 size_t fread(void *restrict destv, size_t size, size_t nmemb, FILE *restrict f)
 {

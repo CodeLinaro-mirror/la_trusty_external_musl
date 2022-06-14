@@ -1,7 +1,9 @@
 #include "stdio_impl.h"
 #include <string.h>
 
+#ifndef MIN
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
+#endif
 
 char *fgets(char *restrict s, int n, FILE *restrict f)
 {

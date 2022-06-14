@@ -81,10 +81,12 @@ typedef wctype_t tre_ctype_t;
    ? (sizeof(type) - (((long)ptr) % sizeof(type))) \
    : 0)
 
-#undef MAX
-#undef MIN
+#ifndef MAX
 #define MAX(a, b) (((a) >= (b)) ? (a) : (b))
+#endif
+#ifndef MIN
 #define MIN(a, b) (((a) <= (b)) ? (a) : (b))
+#endif
 
 /* TNFA transition type. A TNFA state is an array of transitions,
    the terminator is a transition with NULL `state'. */
