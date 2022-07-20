@@ -113,11 +113,11 @@ int snprintf_filtered(char *__restrict, size_t, const char *__restrict, ...);
 
 int vprintf(const char *__restrict, __isoc_va_list);
 int vfprintf_worker(FILE *__restrict, const char *__restrict, __isoc_va_list, int);
-inline int vfprintf(FILE *__restrict f, const char *__restrict fmt, va_list ap)
+static inline int vfprintf(FILE *__restrict f, const char *__restrict fmt, va_list ap)
 {
 	return vfprintf_worker(f, fmt, ap, 1);
 }
-inline int vfprintf_unfiltered(FILE *__restrict f, const char *__restrict fmt, va_list ap)
+static inline int vfprintf_unfiltered(FILE *__restrict f, const char *__restrict fmt, va_list ap)
 {
 	return vfprintf_worker(f, fmt, ap, 0);
 }
