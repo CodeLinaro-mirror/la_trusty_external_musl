@@ -22,6 +22,9 @@ int   isxdigit(int);
 int   tolower(int);
 int   toupper(int);
 
+// Disable these macros to avoid having to disable unsigned-integer-overflow
+// UBSAN checks in all modules that use them.
+#if !UBSAN_ENABLED
 #ifndef __cplusplus
 static __inline int __isspace(int _c)
 {
@@ -35,6 +38,7 @@ static __inline int __isspace(int _c)
 #define isprint(a) (0 ? isprint(a) : ((unsigned)(a)-0x20) < 0x5f)
 #define isgraph(a) (0 ? isgraph(a) : ((unsigned)(a)-0x21) < 0x5e)
 #define isspace(a) __isspace(a)
+#endif
 #endif
 
 
