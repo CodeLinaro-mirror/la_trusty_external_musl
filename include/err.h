@@ -1,6 +1,9 @@
 #ifndef _ERR_H
 #define _ERR_H
 
+#if !defined(TRUSTY_USERSPACE)
+#include <uapi/err.h>
+#else
 #include <features.h>
 #include <stdarg.h>
 
@@ -20,6 +23,7 @@ _Noreturn void verrx(int, const char *, va_list);
 
 #ifdef __cplusplus
 }
+#endif
 #endif
 
 #endif

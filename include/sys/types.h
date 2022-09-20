@@ -56,6 +56,10 @@ extern "C" {
 
 #include <bits/alltypes.h>
 
+#if !defined(TRUSTY_USERSPACE)
+#include <lk/types.h>
+#endif
+
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 typedef unsigned char u_int8_t;
 typedef unsigned short u_int16_t;

@@ -1,3 +1,7 @@
+#if !defined(TRUSTY_USERSPACE)
+// Include LK's assert.h when building for the kernel
+#include_next <assert.h>
+#else
 #include <features.h>
 
 #undef assert
@@ -20,4 +24,5 @@ _Noreturn void __assert_fail (const char *, const char *, int, const char *);
 
 #ifdef __cplusplus
 }
+#endif
 #endif
