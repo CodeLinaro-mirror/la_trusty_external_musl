@@ -105,11 +105,13 @@ int clock_nanosleep (clockid_t, int, const struct timespec *, struct timespec *)
 int clock_getcpuclockid (pid_t, clockid_t *);
 
 struct sigevent;
+#if defined(TRUSTY_USERSPACE)
 int timer_create (clockid_t, struct sigevent *__restrict, timer_t *__restrict);
 int timer_delete (timer_t);
 int timer_settime (timer_t, int, const struct itimerspec *__restrict, struct itimerspec *__restrict);
 int timer_gettime (timer_t, struct itimerspec *);
 int timer_getoverrun (timer_t);
+#endif
 
 extern char *tzname[2];
 

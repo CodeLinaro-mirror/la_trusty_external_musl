@@ -233,11 +233,13 @@ typedef unsigned long wctype_t;
 #endif
 
 
+#if defined(TRUSTY_USERSPACE)
 #if defined(__NEED_timer_t) && !defined(__DEFINED_timer_t)
 typedef void * timer_t;
 #define __DEFINED_timer_t
 #endif
 
+#endif
 #if defined(__NEED_clockid_t) && !defined(__DEFINED_clockid_t)
 typedef int clockid_t;
 #define __DEFINED_clockid_t
