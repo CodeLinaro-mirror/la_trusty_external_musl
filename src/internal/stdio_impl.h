@@ -1,13 +1,24 @@
 #ifndef _STDIO_IMPL_H
 #define _STDIO_IMPL_H
 
+#include <assert.h>
 #include <stdio.h>
 
 #define UNGET 8
 
+#if defined(TRUSTY_USERSPACE)
 #define FFINALLOCK(f) ((f)->lock>=0 ? __lockfile((f)) : 0)
 #define FLOCK(f) int __need_unlock = ((f)->lock>=0 ? __lockfile((f)) : 0)
 #define FUNLOCK(f) do { if (__need_unlock) __unlockfile((f)); } while (0)
+#else
+/* Trusty only supports the std streams which all have `lock = -1`, so these
+ * macros are unnecessary. Defining them as no-ops lets us avoid compiling
+ * __lockfile.c which makes use of __pthread_self which is not defined in the
+ * kernel. */
+#define FFINALLOCK(f) do { DEBUG_ASSERT((f)->lock == -1); } while (0)
+#define FLOCK(f) do { DEBUG_ASSERT((f)->lock == -1); } while (0)
+#define FUNLOCK(f) do { DEBUG_ASSERT((f)->lock == -1); } while (0)
+#endif
 
 #define F_PERM 1
 #define F_NORD 4

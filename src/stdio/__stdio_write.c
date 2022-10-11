@@ -1,6 +1,10 @@
 #include "stdio_impl.h"
 #include <sys/uio.h>
-#include <trusty_syscalls.h>
+#if defined(TRUSTY_USERSPACE)
+#include <trusty_uio.h>
+#else
+#include <trusty/uio.h>
+#endif
 
 size_t __stdio_write(FILE *f, const unsigned char *buf, size_t len)
 {
@@ -13,7 +17,7 @@ size_t __stdio_write(FILE *f, const unsigned char *buf, size_t len)
 	int iovcnt = 2;
 	ssize_t cnt;
 	for (;;) {
-		cnt = _trusty_writev(f->fd, iov, iovcnt);
+		cnt = trusty_writev(f->fd, iov, iovcnt);
 		if (cnt == rem) {
 			f->wend = f->buf + f->buf_size;
 			f->wpos = f->wbase = f->buf;

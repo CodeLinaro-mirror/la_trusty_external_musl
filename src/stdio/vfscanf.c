@@ -68,7 +68,9 @@ int vfscanf(FILE *restrict f, const char *restrict fmt, va_list ap)
 	int invert;
 	int matches=0;
 	unsigned long long x;
+#if !WITH_NO_FP
 	long double y;
+#endif
 	off_t pos = 0;
 	unsigned char scanset[257];
 	size_t i, k;
@@ -299,6 +301,7 @@ int vfscanf(FILE *restrict f, const char *restrict fmt, va_list ap)
 		case 'e': case 'E':
 		case 'f': case 'F':
 		case 'g': case 'G':
+#if !WITH_NO_FP
 			y = __floatscan(f, size, 0);
 			if (!shcnt(f)) goto match_fail;
 			if (dest) switch (size) {
@@ -312,6 +315,9 @@ int vfscanf(FILE *restrict f, const char *restrict fmt, va_list ap)
 				*(long double *)dest = y;
 				break;
 			}
+#else
+			panic("Floating point code is not supported\n");
+#endif
 			break;
 		}
 

@@ -15,8 +15,12 @@ static int locking_putc(int c, FILE *f)
 
 static inline int do_putc(int c, FILE *f)
 {
+#if defined(TRUSTY_USERSPACE)
 	int l = f->lock;
 	if (l < 0 || l && (l & ~MAYBE_WAITERS) == __pthread_self()->tid)
 		return putc_unlocked(c, f);
 	return locking_putc(c, f);
+#else
+	return putc_unlocked(c, f);
+#endif
 }

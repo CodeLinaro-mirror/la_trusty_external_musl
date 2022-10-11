@@ -189,6 +189,7 @@ static void pop_arg(union arg *arg, int type, va_list *ap)
 	break; case UMAX:	arg->i = va_arg(*ap, uintmax_t);
 	break; case PDIFF:	arg->i = va_arg(*ap, ptrdiff_t);
 	break; case UIPTR:	arg->i = (uintptr_t)va_arg(*ap, void *);
+#if !WITH_NO_FP
 	break; case DBL:	arg->f = (stdio_float)va_arg(*ap, double);
 #if STDIO_FLOAT == 128
 	break; case LDBL:	arg->f = va_arg(*ap, long double);
@@ -196,6 +197,9 @@ static void pop_arg(union arg *arg, int type, va_list *ap)
         /* Zero out to avoid software conversion. */
         break; case LDBL:	va_arg(*ap, long double); arg->f = 0;
 #endif
+#else
+	break; default: panic("Floating point code is not supported\n");
+#endif // !WITH_NO_FP
 	}
 }
 
@@ -259,6 +263,7 @@ static char *fmt_u(uintmax_t x, char *s)
 typedef char compiler_defines_long_double_incorrectly[9-(int)sizeof(long double)];
 #endif
 
+#if !WITH_NO_FP
 /* TRUSTY - noinline to save stack space when floats are not printed. */
 __attribute__((__noinline__))
 static int fmt_fp(FILE *f, stdio_float y, int w, int p, int fl, int t)
@@ -501,6 +506,7 @@ static int fmt_fp(FILE *f, stdio_float y, int w, int p, int fl, int t)
 
 	return MAX(w, pl+l);
 }
+#endif
 
 static int getint(char **s) {
 	int i;
@@ -802,7 +808,11 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			break;
 #else
 			if (xp && p<0) goto overflow;
+#if !WITH_NO_FP
 			l = fmt_fp(f, arg.f, w, p, fl, t);
+#else
+			panic("Floating point code is not supported\n");
+#endif
 			if (l<0) goto overflow;
 			continue;
 #endif

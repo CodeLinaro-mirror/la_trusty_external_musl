@@ -15,8 +15,12 @@ static int locking_getc(FILE *f)
 
 static inline int do_getc(FILE *f)
 {
+#if defined(TRUSTY_USERSPACE)
 	int l = f->lock;
 	if (l < 0 || l && (l & ~MAYBE_WAITERS) == __pthread_self()->tid)
 		return getc_unlocked(f);
 	return locking_getc(f);
+#else
+	return getc_unlocked(f);
+#endif
 }
