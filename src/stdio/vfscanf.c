@@ -316,7 +316,8 @@ int vfscanf(FILE *restrict f, const char *restrict fmt, va_list ap)
 				break;
 			}
 #else
-			panic("Floating point code is not supported\n");
+			fputs("Floating point code is not supported\n", stderr);
+			abort();
 #endif
 			break;
 		}

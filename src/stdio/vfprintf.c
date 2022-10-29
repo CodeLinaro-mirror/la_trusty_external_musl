@@ -198,7 +198,8 @@ static void pop_arg(union arg *arg, int type, va_list *ap)
         break; case LDBL:	va_arg(*ap, long double); arg->f = 0;
 #endif
 #else
-	break; default: panic("Floating point code is not supported\n");
+	break; default:		fputs("Floating point code is not supported\n", stderr);
+				abort();
 #endif // !WITH_NO_FP
 	}
 }
@@ -811,7 +812,8 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 #if !WITH_NO_FP
 			l = fmt_fp(f, arg.f, w, p, fl, t);
 #else
-			panic("Floating point code is not supported\n");
+			fputs("Floating point code is not supported\n", stderr);
+			abort();
 #endif
 			if (l<0) goto overflow;
 			continue;
