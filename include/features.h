@@ -35,10 +35,4 @@
 #define _Noreturn
 #endif
 
-#if (__GNUC__ > 3) || (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || defined(__clang__)
-#define __warn_unused_result __attribute__((__warn_unused_result__))
-#else
-#define __warn_unused_result
-#endif
-
 #endif
