@@ -1,7 +1,8 @@
+#define _BSD_SOURCE
 #include <sys/time.h>
 #include "syscall.h"
 
-int settimeofday(const struct timeval *tv, void *tz)
+int settimeofday(const struct timeval *tv, const struct timezone *tz)
 {
-	return syscall2(__NR_settimeofday, (long)tv, 0);
+	return syscall(SYS_settimeofday, tv, 0);
 }

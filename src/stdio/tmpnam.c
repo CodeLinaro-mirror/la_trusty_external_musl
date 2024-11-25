@@ -1,38 +1,28 @@
 #include <stdio.h>
-#include <stdlib.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <string.h>
-#include <limits.h>
-#include <unistd.h>
-#include "libc.h"
+#include <stdlib.h>
+#include "syscall.h"
 
-char *tmpnam(char *s)
+#define MAXTRIES 100
+
+char *tmpnam(char *buf)
 {
-	static int lock;
-	static int index;
-	static char *s2;
-	int pid = getpid();
-	char *dir = getenv("TMPDIR");
-
-	if (!s) {
-		if (!s2) s2 = malloc(L_tmpnam);
-		s = s2;
+	static char internal[L_tmpnam];
+	char s[] = "/tmp/tmpnam_XXXXXX";
+	int try;
+	int r;
+	for (try=0; try<MAXTRIES; try++) {
+		__randname(s+12);
+#ifdef SYS_lstat
+		r = __syscall(SYS_lstat, s, &(struct stat){0});
+#else
+		r = __syscall(SYS_fstatat, AT_FDCWD, s,
+			&(struct stat){0}, AT_SYMLINK_NOFOLLOW);
+#endif
+		if (r == -ENOENT) return strcpy(buf ? buf : internal, s);
 	}
-
-	/* this interface is insecure anyway but at least we can try.. */
-	if (!dir || strlen(dir) > L_tmpnam-32)
-		dir = P_tmpdir;
-
-	if (access(dir, R_OK|W_OK|X_OK) != 0)
-		return NULL;
-
-	LOCK(&lock);
-	for (index++; index < TMP_MAX; index++) {
-		snprintf(s, L_tmpnam, "%s/temp%d-%d", dir, pid, index);
-		if (access(s, F_OK) != 0) {
-			UNLOCK(&lock);
-			return s;
-		}
-	}
-	UNLOCK(&lock);
-	return NULL;
+	return 0;
 }

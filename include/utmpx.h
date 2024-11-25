@@ -5,14 +5,16 @@
 extern "C" {
 #endif
 
+#include <features.h>
+
 #define __NEED_pid_t
 #define __NEED_time_t
+#define __NEED_suseconds_t
 #define __NEED_struct_timeval
 
 #include <bits/alltypes.h>
 
-struct utmpx
-{
+struct utmpx {
 	short ut_type;
 	pid_t ut_pid;
 	char ut_line[32];
@@ -22,7 +24,7 @@ struct utmpx
 	struct {
 		short __e_termination;
 		short __e_exit;
-	} __ut_exit;
+	} ut_exit;
 	long ut_session;
 	struct timeval ut_tv;
 	unsigned ut_addr_v6[4];
@@ -36,7 +38,15 @@ struct utmpx *getutxline(const struct utmpx *);
 struct utmpx *pututxline(const struct utmpx *);
 void          setutxent(void);
 
+#if defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
+#define e_exit __e_exit
+#define e_termination __e_termination
+void updwtmpx(const char *, const struct utmpx *);
+int utmpxname(const char *);
+#endif
+
 #define EMPTY           0
+#define RUN_LVL         1
 #define BOOT_TIME       2
 #define NEW_TIME        3
 #define OLD_TIME        4

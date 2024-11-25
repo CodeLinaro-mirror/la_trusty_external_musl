@@ -1,28 +1,33 @@
 #include <resolv.h>
-#include <string.h>
 
-#define BITOP(a,b,op) \
- ((a)[(size_t)(b)/(8*sizeof *(a))] op (size_t)1<<((size_t)(b)%(8*sizeof *(a))))
-
-int dn_expand(unsigned char *b, unsigned char *pz, unsigned char *p, unsigned char *s, int outlen)
+int __dn_expand(const unsigned char *base, const unsigned char *end, const unsigned char *src, char *dest, int space)
 {
-	/* Remember jump destinations to detect loops and abort */
-	size_t seen[512/8/sizeof(size_t)] = { 0 };
-	unsigned char *sz = s + outlen;
-	if (pz-b > 512) return -1;
-	for (;;) {
-		if (p>=pz) return -1;
-		else if (*p&0xc0) {
-			int j = (p[0]&1) | p[1];
-			if (BITOP(seen, j, &)) return -1;
-			BITOP(seen, j, |=);
-			p = b + j;
+	const unsigned char *p = src;
+	char *dend, *dbegin = dest;
+	int len = -1, i, j;
+	if (p==end || space <= 0) return -1;
+	dend = dest + (space > 254 ? 254 : space);
+	/* detect reference loop using an iteration counter */
+	for (i=0; i < end-base; i+=2) {
+		/* loop invariants: p<end, dest<dend */
+		if (*p & 0xc0) {
+			if (p+1==end) return -1;
+			j = ((p[0] & 0x3f) << 8) | p[1];
+			if (len < 0) len = p+2-src;
+			if (j >= end-base) return -1;
+			p = base+j;
 		} else if (*p) {
-			if (p+*p+1>=pz || s+*p>=sz) return -1;
-			memcpy(s, p+1, *p);
-			s += *p+1;
-			p += *p+1;
-			s[-1] = *p ? '.' : 0;
-		} else return 0;
+			if (dest != dbegin) *dest++ = '.';
+			j = *p++;
+			if (j >= end-p || j >= dend-dest) return -1;
+			while (j--) *dest++ = *p++;
+		} else {
+			*dest = 0;
+			if (len < 0) len = p+1-src;
+			return len;
+		}
 	}
+	return -1;
 }
+
+weak_alias(__dn_expand, dn_expand);

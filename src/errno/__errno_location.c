@@ -1,11 +1,9 @@
 #include <errno.h>
-#include "libc.h"
-
-#undef errno
-int errno;
+#include "pthread_impl.h"
 
 int *__errno_location(void)
 {
-	if (libc.errno_location) return libc.errno_location();
-	return &errno;
+	return &__pthread_self()->errno_val;
 }
+
+weak_alias(__errno_location, ___errno_location);

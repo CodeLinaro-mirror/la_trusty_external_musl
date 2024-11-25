@@ -1,12 +1,9 @@
 #include <setjmp.h>
 #include <signal.h>
-#include <stdlib.h>
+#include "syscall.h"
+#include "pthread_impl.h"
 
-void siglongjmp(sigjmp_buf buf, int ret)
+_Noreturn void siglongjmp(sigjmp_buf buf, int ret)
 {
-	long *flag = buf + sizeof(jmp_buf)/sizeof(long);
-	sigset_t *mask = (void *)(flag + 1);
-	if (*flag)
-		sigprocmask (SIG_SETMASK, mask, NULL);
-	longjmp((void *)buf, ret);
+	longjmp(buf, ret);
 }

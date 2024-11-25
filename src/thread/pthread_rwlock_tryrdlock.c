@@ -1,13 +1,15 @@
 #include "pthread_impl.h"
 
-int pthread_rwlock_tryrdlock(pthread_rwlock_t *rw)
+int __pthread_rwlock_tryrdlock(pthread_rwlock_t *rw)
 {
-	a_inc(&rw->__readers);
-	if (rw->__wrlock) {
-		a_dec(&rw->__readers);
-		if (rw->__waiters && !rw->__readers)
-			__wake(&rw->__readers, 1, 0);
-		return EAGAIN;
-	}
+	int val, cnt;
+	do {
+		val = rw->_rw_lock;
+		cnt = val & 0x7fffffff;
+		if (cnt == 0x7fffffff) return EBUSY;
+		if (cnt == 0x7ffffffe) return EAGAIN;
+	} while (a_cas(&rw->_rw_lock, val, val+1) != val);
 	return 0;
 }
+
+weak_alias(__pthread_rwlock_tryrdlock, pthread_rwlock_tryrdlock);

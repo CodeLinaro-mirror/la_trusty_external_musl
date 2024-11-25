@@ -3,5 +3,5 @@
 
 int sigpending(sigset_t *set)
 {
-	return syscall2(__NR_rt_sigpending, (long)set, SYSCALL_SIGSET_SIZE);
+	return syscall(SYS_rt_sigpending, set, _NSIG/8);
 }

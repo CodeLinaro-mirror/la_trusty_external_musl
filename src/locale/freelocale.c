@@ -3,5 +3,7 @@
 
 void freelocale(locale_t l)
 {
-	free(l);
+	if (__loc_is_allocated(l)) free(l);
 }
+
+weak_alias(freelocale, __freelocale);

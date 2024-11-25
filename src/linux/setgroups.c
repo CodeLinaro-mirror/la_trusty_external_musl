@@ -1,9 +1,8 @@
+#define _GNU_SOURCE
 #include <unistd.h>
-#define SYSCALL_STANDALONE
 #include "syscall.h"
 
-int setgroups(int count, const gid_t list[])
+int setgroups(size_t count, const gid_t list[])
 {
-	/* this depends on our gid_t being 32bit */
-	return syscall2(__NR_setgroups32, count, (long)list);
+	return syscall(SYS_setgroups, count, list);
 }

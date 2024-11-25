@@ -1,6 +1,8 @@
 #include "pwf.h"
 
 static FILE *f;
+static char *line, **mem;
+static struct group gr;
 
 void setgrent()
 {
@@ -12,28 +14,26 @@ weak_alias(setgrent, endgrent);
 
 struct group *getgrent()
 {
-	static char *line, **mem;
-	static struct group gr;
+	struct group *res;
 	size_t size=0, nmem=0;
-	if (!f) f = fopen("/etc/group", "rb");
+	if (!f) f = fopen("/etc/group", "rbe");
 	if (!f) return 0;
-	return __getgrent_a(f, &gr, &line, &size, &mem, &nmem);
+	__getgrent_a(f, &gr, &line, &size, &mem, &nmem, &res);
+	return res;
 }
 
 struct group *getgrgid(gid_t gid)
 {
-	struct group *gr;
-	setgrent();
-	while ((gr=getgrent()) && gr->gr_gid != gid);
-	endgrent();
-	return gr;
+	struct group *res;
+	size_t size=0, nmem=0;
+	__getgr_a(0, gid, &gr, &line, &size, &mem, &nmem, &res);
+	return res;
 }
 
 struct group *getgrnam(const char *name)
 {
-	struct group *gr;
-	setgrent();
-	while ((gr=getgrent()) && strcmp(gr->gr_name, name));
-	endgrent();
-	return gr;
+	struct group *res;
+	size_t size=0, nmem=0;
+	__getgr_a(name, 0, &gr, &line, &size, &mem, &nmem, &res);
+	return res;
 }

@@ -1,35 +1,49 @@
 .text
 .global __clone
-.type   __clone,%function
+.hidden __clone
+.type   __clone,@function
 __clone:
-	movl	8(%esp),%ecx
-	andl	$0xfffffff0, %ecx
-	subl	$28,%ecx
-	movl	16(%esp),%eax
-	movl	%eax,12(%ecx)
-	movl	4(%esp),%eax
-	movl	%eax,8(%ecx)
-	pushl	%ebx
-	pushl	%esi
-	pushl	%edi
-	movl	$120,%eax
-	movl	12+12(%esp),%ebx
-	movl	20+12(%esp),%edx
-	movl	24+12(%esp),%esi
-	movl	28+12(%esp),%edi
-	int	$128
-	popl	%edi
-	popl	%esi
-	popl	%ebx
-	test	%eax,%eax
-	jnz	1f
-	xorl	%ebp,%ebp
-	call	*%ebx
-	movl	%eax, %ebx
-	movl	$1, %eax
-	int	$128
-1:	
-	movl %eax, 4(%esp)
-	ret
+	push %ebp
+	mov %esp,%ebp
+	push %ebx
+	push %esi
+	push %edi
 
-.size __clone,.-__clone
+	xor %eax,%eax
+	push $0x51
+	mov %gs,%ax
+	push $0xfffff
+	shr $3,%eax
+	push 28(%ebp)
+	push %eax
+	mov $120,%al
+
+	mov 12(%ebp),%ecx
+	mov 16(%ebp),%ebx
+	and $-16,%ecx
+	sub $16,%ecx
+	mov 20(%ebp),%edi
+	mov %edi,(%ecx)
+	mov 24(%ebp),%edx
+	mov %esp,%esi
+	mov 32(%ebp),%edi
+	mov 8(%ebp),%ebp
+	int $128
+	test %eax,%eax
+	jnz 1f
+
+	mov %ebp,%eax
+	xor %ebp,%ebp
+	call *%eax
+	mov %eax,%ebx
+	xor %eax,%eax
+	inc %eax
+	int $128
+	hlt
+
+1:	add $16,%esp
+	pop %edi
+	pop %esi
+	pop %ebx
+	pop %ebp
+	ret

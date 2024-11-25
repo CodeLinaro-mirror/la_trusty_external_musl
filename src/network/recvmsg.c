@@ -1,14 +1,21 @@
 #include <sys/socket.h>
+#include <limits.h>
 #include "syscall.h"
-#include "socketcall.h"
-#include "libc.h"
 
 ssize_t recvmsg(int fd, struct msghdr *msg, int flags)
 {
-	unsigned long args[] = { fd, (unsigned long)msg, flags };
 	ssize_t r;
-	CANCELPT_BEGIN;
-	r = syscall2(__NR_socketcall, SYS_RECVMSG, (long)args);
-	CANCELPT_END;
+#if LONG_MAX > INT_MAX
+	struct msghdr h, *orig = msg;
+	if (msg) {
+		h = *msg;
+		h.__pad1 = h.__pad2 = 0;
+		msg = &h;
+	}
+#endif
+	r = socketcall_cp(recvmsg, fd, msg, flags, 0, 0, 0);
+#if LONG_MAX > INT_MAX
+	if (orig) *orig = h;
+#endif
 	return r;
 }

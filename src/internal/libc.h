@@ -3,41 +3,55 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <limits.h>
 
-#define libc __libc
-extern struct libc {
-	void (*lock)(volatile int *);
-	void (*cancelpt)(int);
-	int (*atexit)(void (*)(void));
-	void (*fini)(void);
-	void (*ldso_fini)(void);
-	int *(*errno_location)(void);
+struct __locale_map;
+
+struct __locale_struct {
+	const struct __locale_map *cat[6];
+};
+
+struct tls_module {
+	struct tls_module *next;
+	void *image;
+	size_t len, size, align, offset;
+};
+
+struct __libc {
+	int can_do_threads;
+	int threaded;
+	int secure;
 	volatile int threads_minus_1;
-	int (*rsyscall)(int, long, long, long, long, long, long);
-	void (**tsd_keys)(void *);
-} libc;
+	size_t *auxv;
+	struct tls_module *tls_head;
+	size_t tls_size, tls_align, tls_cnt;
+	size_t page_size;
+	struct __locale_struct global_locale;
+};
 
+#ifndef PAGE_SIZE
+#define PAGE_SIZE libc.page_size
+#endif
 
-/* Designed to avoid any overhead in non-threaded processes */
-void __lock(volatile int *);
-#define LOCK(x) (libc.threads_minus_1 ? (__lock(x),1) : ((void)(x),1))
-#define UNLOCK(x) (*(x)=0)
-#define CANCELPT(x) (libc.cancelpt ? libc.cancelpt((x)),0 : (void)(x),0)
-#define CANCELPT_BEGIN CANCELPT(1)
-#define CANCELPT_END CANCELPT(0)
+extern hidden struct __libc __libc;
+#define libc __libc
 
-extern char **__environ;
-#define environ __environ
+hidden void __init_libc(char **, char *);
+hidden void __init_tls(size_t *);
+hidden void __init_ssp(void *);
+hidden void __libc_start_init(void);
+hidden void __funcs_on_exit(void);
+hidden void __funcs_on_quick_exit(void);
+hidden void __libc_exit_fini(void);
+hidden void __fork_handler(int);
 
-#undef weak_alias
-#define weak_alias(old, new) \
-	extern __typeof(old) new __attribute__((weak, alias(#old)))
+extern hidden size_t __hwcap;
+extern hidden size_t __sysinfo;
+extern char *__progname, *__progname_full;
 
-#undef LFS64_2
-//#define LFS64_2(x, y) weak_alias(x, y)
-#define LFS64_2(x, y) extern __typeof(x) y
+extern hidden const char __libc_version[];
 
-#undef LFS64
-#define LFS64(x) LFS64_2(x, x##64)
+hidden void __synccall(void (*)(void *), void *);
+hidden int __setxid(int, int, int, int);
 
 #endif

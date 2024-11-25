@@ -1,17 +1,25 @@
 #include "pthread_impl.h"
 
-int pthread_rwlock_timedwrlock(pthread_rwlock_t *rw, const struct timespec *at)
+int __pthread_rwlock_timedwrlock(pthread_rwlock_t *restrict rw, const struct timespec *restrict at)
 {
-	int nr, *p, w=0;
-	while (pthread_rwlock_trywrlock(rw)==EAGAIN) {
-		if (!w) a_inc(&rw->__waiters), w++;
-		if ((nr=rw->__readers)) p = &rw->__readers;
-		else nr=1, p = &rw->__wrlock;
-		if (__timedwait(p, nr, CLOCK_REALTIME, at, 0)==ETIMEDOUT) {
-			if (w) a_dec(&rw->__waiters);
-			return ETIMEDOUT;
-		}
+	int r, t;
+	
+	r = pthread_rwlock_trywrlock(rw);
+	if (r != EBUSY) return r;
+	
+	int spins = 100;
+	while (spins-- && rw->_rw_lock && !rw->_rw_waiters) a_spin();
+
+	while ((r=__pthread_rwlock_trywrlock(rw))==EBUSY) {
+		if (!(r=rw->_rw_lock)) continue;
+		t = r | 0x80000000;
+		a_inc(&rw->_rw_waiters);
+		a_cas(&rw->_rw_lock, r, t);
+		r = __timedwait(&rw->_rw_lock, t, CLOCK_REALTIME, at, rw->_rw_shared^128);
+		a_dec(&rw->_rw_waiters);
+		if (r && r != EINTR) return r;
 	}
-	if (w) a_dec(&rw->__waiters);
-	return 0;
+	return r;
 }
+
+weak_alias(__pthread_rwlock_timedwrlock, pthread_rwlock_timedwrlock);

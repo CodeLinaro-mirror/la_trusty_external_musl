@@ -2,7 +2,7 @@
 #include <stdarg.h>
 #include <wchar.h>
 
-int fwscanf(FILE *f, const wchar_t *fmt, ...)
+int fwscanf(FILE *restrict f, const wchar_t *restrict fmt, ...)
 {
 	int ret;
 	va_list ap;
@@ -11,3 +11,5 @@ int fwscanf(FILE *f, const wchar_t *fmt, ...)
 	va_end(ap);
 	return ret;
 }
+
+weak_alias(fwscanf,__isoc99_fwscanf);

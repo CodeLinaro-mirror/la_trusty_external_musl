@@ -1,10 +1,9 @@
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
-#include <inttypes.h>
+#include <stdint.h>
 #include <errno.h>
 #include <stddef.h>
-#include <libc.h>
 
 int scandir(const char *path, struct dirent ***res,
 	int (*sel)(const struct dirent *),
@@ -12,7 +11,7 @@ int scandir(const char *path, struct dirent ***res,
 {
 	DIR *d = opendir(path);
 	struct dirent *de, **names=0, **tmp;
-	size_t cnt=0, len=0, size;
+	size_t cnt=0, len=0;
 	int old_errno = errno;
 
 	if (!d) return -1;
@@ -26,25 +25,23 @@ int scandir(const char *path, struct dirent ***res,
 			if (!tmp) break;
 			names = tmp;
 		}
-		size = offsetof(struct dirent,d_name) + strlen(de->d_name) + 1;
-		names[cnt] = malloc(size);
+		names[cnt] = malloc(de->d_reclen);
 		if (!names[cnt]) break;
-		memcpy(names[cnt++], de, size);
+		memcpy(names[cnt++], de, de->d_reclen);
 	}
 
 	closedir(d);
 
 	if (errno) {
-		old_errno = errno;
 		if (names) while (cnt-->0) free(names[cnt]);
 		free(names);
-		errno = old_errno;
 		return -1;
 	}
+	errno = old_errno;
 
 	if (cmp) qsort(names, cnt, sizeof *names, (int (*)(const void *, const void *))cmp);
 	*res = names;
 	return cnt;
 }
 
-LFS64(scandir);
+weak_alias(scandir, scandir64);

@@ -1,28 +1,33 @@
 #include <stdlib.h>
-#include <unistd.h>
-#include <stdio.h>
+#include <stdint.h>
 #include "libc.h"
 
-/* __overflow.c and atexit.c override these */
-static int (*const dummy)() = 0;
-weak_alias(dummy, __funcs_on_exit);
-weak_alias(dummy, __fflush_on_exit);
-
-void exit(int code)
+static void dummy()
 {
-	static int lock;
+}
 
-	/* If more than one thread calls exit, hang until _Exit ends it all */
-	LOCK(&lock);
+/* atexit.c and __stdio_exit.c override these. the latter is linked
+ * as a consequence of linking either __toread.c or __towrite.c. */
+weak_alias(dummy, __funcs_on_exit);
+weak_alias(dummy, __stdio_exit);
+weak_alias(dummy, _fini);
 
-	/* Only do atexit & stdio flush if they were actually used */
-	if (__funcs_on_exit) __funcs_on_exit();
-	if (__fflush_on_exit) __fflush_on_exit(0);
+extern weak hidden void (*const __fini_array_start)(void), (*const __fini_array_end)(void);
 
-	/* Destructor s**t is kept separate from atexit to avoid bloat */
-	if (libc.fini) libc.fini();
-	if (libc.ldso_fini) libc.ldso_fini();
+static void libc_exit_fini(void)
+{
+	uintptr_t a = (uintptr_t)&__fini_array_end;
+	for (; a>(uintptr_t)&__fini_array_start; a-=sizeof(void(*)()))
+		(*(void (**)())(a-sizeof(void(*)())))();
+	_fini();
+}
 
+weak_alias(libc_exit_fini, __libc_exit_fini);
+
+_Noreturn void exit(int code)
+{
+	__funcs_on_exit();
+	__libc_exit_fini();
+	__stdio_exit();
 	_Exit(code);
-	for(;;);
 }

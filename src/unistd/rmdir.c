@@ -1,7 +1,12 @@
 #include <unistd.h>
+#include <fcntl.h>
 #include "syscall.h"
 
 int rmdir(const char *path)
 {
-	return syscall1(__NR_rmdir, (long)path);
+#ifdef SYS_rmdir
+	return syscall(SYS_rmdir, path);
+#else
+	return syscall(SYS_unlinkat, AT_FDCWD, path, AT_REMOVEDIR);
+#endif
 }

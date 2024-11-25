@@ -1,7 +1,11 @@
-#include <stddef.h>
+#define _BSD_SOURCE
+#include <unistd.h>
+#include <stdint.h>
+#include <errno.h>
 #include "syscall.h"
 
-void *sbrk(ptrdiff_t inc)
+void *sbrk(intptr_t inc)
 {
-	return (void *)syscall1(__NR_brk, syscall1(__NR_brk, 0)+inc);
+	if (inc) return (void *)__syscall_ret(-ENOMEM);
+	return (void *)__syscall(SYS_brk, 0);
 }

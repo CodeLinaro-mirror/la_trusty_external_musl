@@ -1,16 +1,28 @@
 #include "pwf.h"
+#include <pthread.h>
 
-struct group *__getgrent_a(FILE *f, struct group *gr, char **line, size_t *size, char ***mem, size_t *nmem)
+static unsigned atou(char **s)
+{
+	unsigned x;
+	for (x=0; **s-'0'<10U; ++*s) x=10*x+(**s-'0');
+	return x;
+}
+
+int __getgrent_a(FILE *f, struct group *gr, char **line, size_t *size, char ***mem, size_t *nmem, struct group **res)
 {
 	ssize_t l;
 	char *s, *mems;
 	size_t i;
-
+	int rv = 0;
+	int cs;
+	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 	for (;;) {
 		if ((l=getline(line, size, f)) < 0) {
+			rv = ferror(f) ? errno : 0;
 			free(*line);
 			*line = 0;
-			return 0;
+			gr = 0;
+			goto end;
 		}
 		line[0][l-1] = 0;
 
@@ -21,8 +33,8 @@ struct group *__getgrent_a(FILE *f, struct group *gr, char **line, size_t *size,
 		*s++ = 0; gr->gr_passwd = s;
 		if (!(s = strchr(s, ':'))) continue;
 
-		*s++ = 0; gr->gr_gid = atoi(s);
-		if (!(s = strchr(s, ':'))) continue;
+		*s++ = 0; gr->gr_gid = atou(&s);
+		if (*s != ':') continue;
 
 		*s++ = 0; mems = s;
 		break;
@@ -33,14 +45,24 @@ struct group *__getgrent_a(FILE *f, struct group *gr, char **line, size_t *size,
 	free(*mem);
 	*mem = calloc(sizeof(char *), *nmem+1);
 	if (!*mem) {
+		rv = errno;
 		free(*line);
 		*line = 0;
-		return 0;
+		gr = 0;
+		goto end;
 	}
-	mem[0][0] = mems;
-	for (s=mems, i=0; *s; s++)
-		if (*s==',') *s++ = 0, mem[0][++i] = s;
-	mem[0][++i] = 0;
+	if (*mems) {
+		mem[0][0] = mems;
+		for (s=mems, i=0; *s; s++)
+			if (*s==',') *s++ = 0, mem[0][++i] = s;
+		mem[0][++i] = 0;
+	} else {
+		mem[0][0] = 0;
+	}
 	gr->gr_mem = *mem;
-	return gr;
+end:
+	pthread_setcancelstate(cs, 0);
+	*res = gr;
+	if(rv) errno = rv;
+	return rv;
 }

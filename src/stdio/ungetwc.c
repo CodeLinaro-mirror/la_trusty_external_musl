@@ -1,45 +1,35 @@
 #include "stdio_impl.h"
+#include "locale_impl.h"
+#include <wchar.h>
+#include <limits.h>
+#include <ctype.h>
+#include <string.h>
 
 wint_t ungetwc(wint_t c, FILE *f)
 {
 	unsigned char mbc[MB_LEN_MAX];
-	int l=1;
-
-	if (c == WEOF) return c;
-
-	/* Try conversion early so we can fail without locking if invalid */
-	if (!isascii(c) && (l = wctomb(mbc, c)) < 0)
-		return WEOF;
+	int l;
+	locale_t *ploc = &CURRENT_LOCALE, loc = *ploc;
 
 	FLOCK(f);
 
-	f->mode |= f->mode+1;
+	if (f->mode <= 0) fwide(f, 1);
+	*ploc = f->locale;
 
-	/* Fail if unreadable or writing and unable to flush */
-	if ((f->flags & (F_ERR|F_NORD)) || (f->wpos && __oflow(f))) {
+	if (!f->rpos) __toread(f);
+	if (!f->rpos || c == WEOF || (l = wcrtomb((void *)mbc, c, 0)) < 0 ||
+	    f->rpos < f->buf - UNGET + l) {
 		FUNLOCK(f);
-		return EOF;
-	}
-
-	/* Clear write mode */
-	f->wpos = f->wstop = f->wend = 0;
-
-	/* Put the file in read mode */
-	if (!f->rpos) f->rpos = f->rend = f->buf;
-
-	/* If unget buffer is nonempty, fail. */
-	if (f->rpos < f->buf) {
-		FUNLOCK(f);
+		*ploc = loc;
 		return WEOF;
 	}
 
-	/* Put character back into the buffer */
 	if (isascii(c)) *--f->rpos = c;
 	else memcpy(f->rpos -= l, mbc, l);
 
-	/* Clear EOF */
 	f->flags &= ~F_EOF;
 
 	FUNLOCK(f);
+	*ploc = loc;
 	return c;
 }

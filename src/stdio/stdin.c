@@ -1,7 +1,9 @@
 #include "stdio_impl.h"
 
-static unsigned char buf[BUFSIZ+UNGET];
-static FILE f = {
+#undef stdin
+
+static unsigned char buf[UNGET];
+hidden FILE __stdin_FILE = {
 	.buf = buf+UNGET,
 	.buf_size = sizeof buf-UNGET,
 	.fd = 0,
@@ -9,5 +11,7 @@ static FILE f = {
 	.read = __stdio_read,
 	.seek = __stdio_seek,
 	.close = __stdio_close,
+	.lock = -1,
 };
-FILE *const stdin = &f;
+FILE *const stdin = &__stdin_FILE;
+FILE *volatile __stdin_used = &__stdin_FILE;

@@ -1,7 +1,8 @@
+#define _GNU_SOURCE
 #include <unistd.h>
 #include <time.h>
 
-int usleep(useconds_t useconds)
+int usleep(unsigned useconds)
 {
 	struct timespec tv = {
 		.tv_sec = useconds/1000000,

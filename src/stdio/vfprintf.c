@@ -1,11 +1,84 @@
 #include "stdio_impl.h"
+#include <errno.h>
+#include <ctype.h>
+#include <limits.h>
+#include <string.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <wchar.h>
+#include <inttypes.h>
+#include <math.h>
+#include <float.h>
+
+/*
+ * TRUSTY - long doubles are 128 bits on ARM 64, which drastically increases
+ * stack size and requires software emulation. To save resources, allow programs
+ * to specify the largest floating point type they will print with STDIO_FLOAT.
+ *    0: disabled
+ *   32: float
+ *   64: double
+ *  128: long double
+ * This is a bit of a lie. long doubles are not always 128 bits. This
+ * preprocessor does not make it easy to do this symbolically, however, so we
+ * lie.
+ */
+
+/* Default */
+#ifndef STDIO_FLOAT
+#define STDIO_FLOAT 0
+#endif
+
+/* Sanity check. */
+#if STDIO_FLOAT != 0 && STDIO_FLOAT != 32 && STDIO_FLOAT != 64 && STDIO_FLOAT != 128
+#error Invalid STDIO_FLOAT
+#endif
+
+/* Define these names in all cases, even if STDIO_FLOAT is invalid. */
+#if STDIO_FLOAT == 32
+typedef float stdio_float;
+#define STDIO_EPSILON FLT_EPSILON
+#define STDIO_FREXP frexpf
+#define STDIO_MAX_EXP FLT_MAX_EXP
+#define STDIO_MANT_DIG FLT_MANT_DIG
+#elif STDIO_FLOAT == 128
+typedef long double stdio_float;
+#define STDIO_EPSILON LDBL_EPSILON
+#define STDIO_FREXP frexpl
+#define STDIO_MAX_EXP LDBL_MAX_EXP
+#define STDIO_MANT_DIG LDBL_MANT_DIG
+#else
+typedef double stdio_float;
+#define STDIO_EPSILON DBL_EPSILON
+#define STDIO_FREXP frexp
+#define STDIO_MAX_EXP DBL_MAX_EXP
+#define STDIO_MANT_DIG DBL_MANT_DIG
+#endif
+
+/* TRUSTY - GNU extention that calls stderr, which can increase rodata size. */
+#ifndef STDIO_NO_FORMAT_M
+#define STDIO_NO_FORMAT_M 1
+#endif
+
+/* TRUSTY - Nonstandard wide character formatting. */
+#ifndef STDIO_NO_FORMAT_WIDE
+#define STDIO_NO_FORMAT_WIDE 1
+#endif
 
 /* Some useful macros */
 
+#ifndef MAX
 #define MAX(a,b) ((a)>(b) ? (a) : (b))
+#endif
+#ifndef MIN
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
-#define CONCAT2(x,y) x ## y
-#define CONCAT(x,y) CONCAT2(x,y)
+#endif
+
+/*
+ * TRUSTY - Macro used to determine if an integer number should
+ * not be printed.
+ */
+#define NUMBER_IN_FILTER_RANGE(num) (((num) > 4096) && ((num) < (uintptr_t)-4096))
 
 /* Convenient bit representation for modifier flags, which all fall
  * within 31 codepoints of the space character. */
@@ -19,14 +92,6 @@
 
 #define FLAGMASK (ALT_FORM|ZERO_PAD|LEFT_ADJ|PAD_POS|MARK_POS|GROUPED)
 
-#if UINT_MAX == ULONG_MAX
-#define LONG_IS_INT
-#endif
-
-#if SIZE_MAX != ULONG_MAX || UINTMAX_MAX != ULLONG_MAX
-#define ODD_TYPES
-#endif
-
 /* State machine to accept length modifiers + conversion specifiers.
  * Result is 0 on failure, or an argument type to pop on success. */
 
@@ -35,23 +100,9 @@ enum {
 	ZTPRE, JPRE,
 	STOP,
 	PTR, INT, UINT, ULLONG,
-#ifndef LONG_IS_INT
 	LONG, ULONG,
-#else
-#define LONG INT
-#define ULONG UINT
-#endif
 	SHORT, USHORT, CHAR, UCHAR,
-#ifdef ODD_TYPES
 	LLONG, SIZET, IMAX, UMAX, PDIFF, UIPTR,
-#else
-#define LLONG ULLONG
-#define SIZET ULONG
-#define IMAX LLONG
-#define UMAX ULLONG
-#define PDIFF LONG
-#define UIPTR ULONG
-#endif
 	DBL, LDBL,
 	NOARG,
 	MAXSTATE
@@ -73,6 +124,8 @@ static const unsigned char states[]['z'-'A'+1] = {
 	}, { /* 1: l-prefixed */
 		S('d') = LONG, S('i') = LONG,
 		S('o') = ULONG, S('u') = ULONG, S('x') = ULONG, S('X') = ULONG,
+		S('e') = DBL, S('f') = DBL, S('g') = DBL, S('a') = DBL,
+		S('E') = DBL, S('F') = DBL, S('G') = DBL, S('A') = DBL,
 		S('c') = INT, S('s') = PTR, S('n') = PTR,
 		S('l') = LLPRE,
 	}, { /* 2: ll-prefixed */
@@ -113,43 +166,47 @@ static const unsigned char states[]['z'-'A'+1] = {
 union arg
 {
 	uintmax_t i;
-	long double f;
+	stdio_float f;
 	void *p;
 };
 
 static void pop_arg(union arg *arg, int type, va_list *ap)
 {
-	/* Give the compiler a hint for optimizing the switch. */
-	if ((unsigned)type > MAXSTATE) return;
 	switch (type) {
 	       case PTR:	arg->p = va_arg(*ap, void *);
 	break; case INT:	arg->i = va_arg(*ap, int);
 	break; case UINT:	arg->i = va_arg(*ap, unsigned int);
-#ifndef LONG_IS_INT
 	break; case LONG:	arg->i = va_arg(*ap, long);
 	break; case ULONG:	arg->i = va_arg(*ap, unsigned long);
-#endif
 	break; case ULLONG:	arg->i = va_arg(*ap, unsigned long long);
 	break; case SHORT:	arg->i = (short)va_arg(*ap, int);
 	break; case USHORT:	arg->i = (unsigned short)va_arg(*ap, int);
 	break; case CHAR:	arg->i = (signed char)va_arg(*ap, int);
 	break; case UCHAR:	arg->i = (unsigned char)va_arg(*ap, int);
-#ifdef ODD_TYPES
 	break; case LLONG:	arg->i = va_arg(*ap, long long);
 	break; case SIZET:	arg->i = va_arg(*ap, size_t);
 	break; case IMAX:	arg->i = va_arg(*ap, intmax_t);
 	break; case UMAX:	arg->i = va_arg(*ap, uintmax_t);
 	break; case PDIFF:	arg->i = va_arg(*ap, ptrdiff_t);
 	break; case UIPTR:	arg->i = (uintptr_t)va_arg(*ap, void *);
-#endif
-	break; case DBL:	arg->f = va_arg(*ap, double);
+#if !WITH_NO_FP
+	break; case DBL:	arg->f = (stdio_float)va_arg(*ap, double);
+#if STDIO_FLOAT == 128
 	break; case LDBL:	arg->f = va_arg(*ap, long double);
+#else
+        /* Zero out to avoid software conversion. */
+        break; case LDBL:	va_arg(*ap, long double); arg->f = 0;
+#endif
+#else
+	break; default:		fputs("Floating point code is not supported\n", stderr);
+				abort();
+#endif // !WITH_NO_FP
 	}
 }
 
 static void out(FILE *f, const char *s, size_t l)
 {
-	__fwritex(s, l, f);
+	if (!(f->flags & F_ERR)) __fwritex((void *)s, l, f);
 }
 
 static void pad(FILE *f, char c, int w, int l, int fl)
@@ -166,6 +223,19 @@ static void pad(FILE *f, char c, int w, int l, int fl)
 static const char xdigits[16] = {
 	"0123456789ABCDEF"
 };
+
+/*
+ * TRUSTY - This is the function used to return what will
+ * be printed if a number value shouldn't be shown.
+ */
+static char *fmt_filter(uintmax_t x, char *s)
+{
+	/* ignoring x value on this
+	 * implementation, always
+	 * filtering with ***.*/
+	for (x = 0; x < 3; x++) *--s = '*';
+	return s;
+}
 
 static char *fmt_x(uintmax_t x, char *s, int lower)
 {
@@ -187,28 +257,39 @@ static char *fmt_u(uintmax_t x, char *s)
 	return s;
 }
 
-static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
+/* Do not override this check. The floating point printing code below
+ * depends on the float.h constants being right. If they are wrong, it
+ * may overflow the stack. */
+#if LDBL_MANT_DIG == 53
+typedef char compiler_defines_long_double_incorrectly[9-(int)sizeof(long double)];
+#endif
+
+#if !WITH_NO_FP
+/* TRUSTY - noinline to save stack space when floats are not printed. */
+__attribute__((__noinline__))
+static int fmt_fp(FILE *f, stdio_float y, int w, int p, int fl, int t)
 {
-	uint32_t big[(LDBL_MAX_EXP+LDBL_MANT_DIG)/9+1];
+	uint32_t big[(STDIO_MANT_DIG+28)/29 + 1          // mantissa expansion
+		+ (STDIO_MAX_EXP+STDIO_MANT_DIG+28+8)/9]; // exponent expansion
 	uint32_t *a, *d, *r, *z;
 	int e2=0, e, i, j, l;
-	char buf[9+LDBL_MANT_DIG/4], *s;
-	const char *prefix="-+ ";
+	char buf[9+STDIO_MANT_DIG/4], *s;
+	const char *prefix="-0X+0X 0X-0x+0x 0x";
 	int pl;
 	char ebuf0[3*sizeof(int)], *ebuf=&ebuf0[3*sizeof(int)], *estr;
 
 	pl=1;
-	if (y<0 || 1/y<0) {
+	if (signbit(y)) {
 		y=-y;
 	} else if (fl & MARK_POS) {
-		prefix++;
+		prefix+=3;
 	} else if (fl & PAD_POS) {
-		prefix+=2;
-	} else pl=0;
+		prefix+=6;
+	} else prefix++, pl=0;
 
 	if (!isfinite(y)) {
 		char *s = (t&32)?"inf":"INF";
-		if (y!=y) s=(t&32)?"nan":"NAN", pl=0;
+		if (y!=y) s=(t&32)?"nan":"NAN";
 		pad(f, ' ', w, 3+pl, fl&~ZERO_PAD);
 		out(f, prefix, pl);
 		out(f, s, 3);
@@ -216,22 +297,31 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 		return MAX(w, 3+pl);
 	}
 
-	y = frexpl(y, &e2) * 2;
+	y = STDIO_FREXP(y, &e2) * 2;
 	if (y) e2--;
 
 	if ((t|32)=='a') {
-		long double round = 8.0;
+		stdio_float round = 8.0;
 		int re;
 
-		if (p<0 || p>=LDBL_MANT_DIG/4-1) re=0;
-		else re=LDBL_MANT_DIG/4-1-p;
+		if (t&32) prefix += 9;
+		pl += 2;
+
+		if (p<0 || p>=STDIO_MANT_DIG/4-1) re=0;
+		else re=STDIO_MANT_DIG/4-1-p;
 
 		if (re) {
-			if (pl && *prefix=='-') y=-y;
+			round *= 1<<(STDIO_MANT_DIG%4);
 			while (re--) round*=16;
-			y+=round;
-			y-=round;
-			if (y<0) y=-y;
+			if (*prefix=='-') {
+				y=-y;
+				y-=round;
+				y+=round;
+				y=-y;
+			} else {
+				y+=round;
+				y-=round;
+			}
 		}
 
 		estr=fmt_u(e2<0 ? -e2 : e2, ebuf);
@@ -240,17 +330,19 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 		*--estr = t+('p'-'a');
 
 		s=buf;
-		*s++='0';
-		*s++=t+('x'-'a');
 		do {
 			int x=y;
 			*s++=xdigits[x]|(t&32);
 			y=16*(y-x);
-			if (s-buf==3 && (y||p>0||(fl&ALT_FORM))) *s++='.';
+			if (s-buf==1 && (y||p>0||(fl&ALT_FORM))) *s++='.';
 		} while (y);
 
-		if (p<0) p = s-buf-4;
-		l = 1 + p + (p || (fl&ALT_FORM)) + ebuf-estr;
+		if (p > INT_MAX-2-(ebuf-estr)-pl)
+			return -1;
+		if (p && s-buf-2 < p)
+			l = (p+2) + (ebuf-estr);
+		else
+			l = (s-buf) + (ebuf-estr);
 
 		pad(f, ' ', w, pl+l, fl);
 		out(f, prefix, pl);
@@ -258,15 +350,15 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 		out(f, buf, s-buf);
 		pad(f, '0', l-(ebuf-estr)-(s-buf), 0, 0);
 		out(f, estr, ebuf-estr);
-		pad(f, '0', w, pl+l, fl^LEFT_ADJ);
+		pad(f, ' ', w, pl+l, fl^LEFT_ADJ);
 		return MAX(w, pl+l);
 	}
 	if (p<0) p=6;
 
-	y *= 0x1p28; e2-=28;
+	if (y) y *= 0x1p28, e2-=28;
 
 	if (e2<0) a=r=z=big;
-	else a=r=z=big+sizeof(big)/sizeof(*big) - LDBL_MANT_DIG - 1;
+	else a=r=z=big+sizeof(big)/sizeof(*big) - STDIO_MANT_DIG - 1;
 
 	do {
 		*z = y;
@@ -281,13 +373,13 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 			*d = x % 1000000000;
 			carry = x / 1000000000;
 		}
-		if (!z[-1] && z>a) z--;
 		if (carry) *--a = carry;
+		while (z>a && !z[-1]) z--;
 		e2-=sh;
 	}
 	while (e2<0) {
-		uint32_t carry=0, *z2;
-		int sh=MIN(9,-e2);
+		uint32_t carry=0, *b;
+		int sh=MIN(9,-e2), need=1+(p+STDIO_MANT_DIG/3U+8)/9;
 		for (d=a; d<z; d++) {
 			uint32_t rm = *d & (1<<sh)-1;
 			*d = (*d>>sh) + carry;
@@ -296,8 +388,8 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 		if (!*a) a++;
 		if (carry) *z++ = carry;
 		/* Avoid (slow!) computation past requested precision */
-		z2 = ((t|32)=='f' ? r : a) + 2 + p/9;
-		z = MIN(z, z2);
+		b = (t|32)=='f' ? r : a;
+		if (z-b > need) z = b+need;
 		e2+=sh;
 	}
 
@@ -305,36 +397,40 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 	else e=0;
 
 	/* Perform rounding: j is precision after the radix (possibly neg) */
-	j = p - ((t|32)!='f')*e - ((t|32)=='g');
+	j = p - ((t|32)!='f')*e - ((t|32)=='g' && p);
 	if (j < 9*(z-r-1)) {
 		uint32_t x;
 		/* We avoid C's broken division of negative numbers */
-		d = r + 1 + (j+9*LDBL_MAX_EXP)/9 - LDBL_MAX_EXP;
-		j += 9*LDBL_MAX_EXP;
+		d = r + 1 + ((j+9*STDIO_MAX_EXP)/9 - STDIO_MAX_EXP);
+		j += 9*STDIO_MAX_EXP;
 		j %= 9;
 		for (i=10, j++; j<9; i*=10, j++);
 		x = *d % i;
 		/* Are there any significant digits past j? */
 		if (x || d+1!=z) {
-			long double round = CONCAT(0x1p,LDBL_MANT_DIG);
-			long double small;
-			if (x<i/2) small=0x01p-1;
-			else if (i==i/2 && d+1==z) small=0x10p-1;
-			else small=0x11p-1;
+			stdio_float round = 2/STDIO_EPSILON;
+			stdio_float small;
+			if ((*d/i & 1) || (i==1000000000 && d>a && (d[-1]&1)))
+				round += 2;
+			if (x<i/2) small=0x0.8p0;
+			else if (x==i/2 && d+1==z) small=0x1.0p0;
+			else small=0x1.8p0;
 			if (pl && *prefix=='-') round*=-1, small*=-1;
+			*d -= x;
 			/* Decide whether to round by probing round+small */
 			if (round+small != round) {
-				*d = *d - x + i;
+				*d = *d + i;
 				while (*d > 999999999) {
 					*d--=0;
+					if (d<a) *--a=0;
 					(*d)++;
 				}
-				if (d<a) a=d;
 				for (i=10, e=9*(r-a); *a>=i; i*=10, e++);
 			}
 		}
-		for (; !z[-1] && z>a; z--);
+		if (z>d+1) z=d+1;
 	}
+	for (; z>a && !z[-1]; z--);
 	
 	if ((t|32)=='g') {
 		if (!p) p++;
@@ -347,7 +443,7 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 		}
 		if (!(fl&ALT_FORM)) {
 			/* Count trailing zeros in last place */
-			if (z>a) for (i=10, j=0; z[-1]%i==0; i*=10, j++);
+			if (z>a && z[-1]) for (i=10, j=0; z[-1]%i==0; i*=10, j++);
 			else j=9;
 			if ((t|32)=='f')
 				p = MIN(p,MAX(0,9*(z-r-1)-j));
@@ -355,17 +451,22 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 				p = MIN(p,MAX(0,9*(z-r-1)+e-j));
 		}
 	}
+	if (p > INT_MAX-1-(p || (fl&ALT_FORM)))
+		return -1;
 	l = 1 + p + (p || (fl&ALT_FORM));
 	if ((t|32)=='f') {
+		if (e > INT_MAX-l) return -1;
 		if (e>0) l+=e;
 	} else {
 		estr=fmt_u(e<0 ? -e : e, ebuf);
 		while(ebuf-estr<2) *--estr='0';
 		*--estr = (e<0 ? '-' : '+');
 		*--estr = t;
+		if (ebuf-estr > INT_MAX-l) return -1;
 		l += ebuf-estr;
 	}
 
+	if (l > INT_MAX-pl) return -1;
 	pad(f, ' ', w, pl+l, fl);
 	out(f, prefix, pl);
 	pad(f, '0', w, pl+l, fl^ZERO_PAD);
@@ -406,49 +507,99 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t)
 
 	return MAX(w, pl+l);
 }
+#endif
 
 static int getint(char **s) {
 	int i;
-	for (i=0; isdigit(**s); (*s)++)
-		i = 10*i + (**s-'0');
+	for (i=0; isdigit(**s); (*s)++) {
+		if (i > INT_MAX/10U || **s-'0' > INT_MAX-10*i) i = -1;
+		else i = 10*i + (**s-'0');
+	}
 	return i;
 }
 
-static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg, int *nl_type)
+static int should_filter_number(uintmax_t number, char **format_string, int filter_number, int use_filter_modifiers)
+{
+	char currChar;
+
+	/* We only filter numbers on a certain range
+	 * (a number outside of +/-4096 will be filtered).*/
+	filter_number = filter_number && NUMBER_IN_FILTER_RANGE(number);
+
+	/* We will check if we have an override filtering modifier.*/
+	currChar = **format_string;
+
+	/* This is a not filtered call, we should not "eat" the extra x.*/
+	if (!use_filter_modifiers) {
+		return filter_number;
+	}
+
+	if (currChar == 0) {
+		/* We were already at the end of the string.*/
+		return filter_number;
+	}
+	switch (currChar)
+	{
+		case 'x':
+			/* We really want to print this character.*/
+			filter_number = 0;
+			/* We are consuming this character, advance format string.*/
+			(*format_string)++;
+			break;
+		default:
+			/* We didn't understood the next character,
+			 * normal parsing code will take care of it.*/
+			break;
+	}
+	return filter_number;
+}
+
+static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg, int *nl_type, int filtered_on_release)
 {
 	char *a, *z, *s=(char *)fmt;
-	unsigned l10n=0, litpct, fl;
-	int w, p;
+	unsigned l10n=0, fl;
+	int w, p, xp;
 	union arg arg;
 	int argpos;
 	unsigned st, ps;
 	int cnt=0, l=0;
-	int i;
-	char buf[sizeof(uintmax_t)*3+3+LDBL_MANT_DIG/4];
+	size_t i;
+	char buf[sizeof(uintmax_t)*3+3+STDIO_MANT_DIG/4];
 	const char *prefix;
 	int t, pl;
+#if STDIO_NO_FORMAT_WIDE != 1
 	wchar_t wc[2], *ws;
 	char mb[4];
+#endif
+	int use_filter_modifiers;
 
+	/* Keeping track if new filtering modifier (x) should be printed or not.*/
+	use_filter_modifiers = filtered_on_release;
+
+#if RELEASE_BUILD == 0
+	/* We are not on a release build, do not filter.*/
+	filtered_on_release = 0;
+#endif
 	for (;;) {
+		/* This error is only specified for snprintf, but since it's
+		 * unspecified for other forms, do the same. Stop immediately
+		 * on overflow; otherwise %n could produce wrong results. */
+		if (l > INT_MAX - cnt) goto overflow;
+
 		/* Update output count, end loop when fmt is exhausted */
-		if (cnt >= 0) {
-			if (l > INT_MAX - cnt) {
-				if (!ferror(f)) errno = EOVERFLOW;
-				cnt = -1;
-			} else cnt += l;
-		}
+		cnt += l;
 		if (!*s) break;
 
 		/* Handle literal text and %% format specifiers */
 		for (a=s; *s && *s!='%'; s++);
-		litpct = strspn(s, "%")/2; /* Optimize %%%% runs */
-		z = s+litpct;
-		s += 2*litpct;
+		for (z=s; s[0]=='%' && s[1]=='%'; z++, s+=2);
+		if (z-a > INT_MAX-cnt) goto overflow;
 		l = z-a;
 		if (f) out(f, a, l);
 		if (l) continue;
 
+		/* $ is a non C standard specifier to
+		 * refer to an argument by position.*/
 		if (isdigit(s[1]) && s[2]=='$') {
 			l10n=1;
 			argpos = s[1]-'0';
@@ -459,6 +610,9 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 		}
 
 		/* Read modifier flags */
+		/* Code takes advantages that all flags fit on 32 bit to
+		 * represent each flag as a bit on a word, it will iterate
+		 * over the input until it cannot find another flag.*/
 		for (fl=0; (unsigned)*s-' '<32 && (FLAGMASK&(1U<<*s-' ')); s++)
 			fl |= 1U<<*s-' ';
 
@@ -472,9 +626,9 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			} else if (!l10n) {
 				w = f ? va_arg(*ap, int) : 0;
 				s++;
-			} else return -1;
+			} else goto inval;
 			if (w<0) fl|=LEFT_ADJ, w=-w;
-		} else if ((w=getint(&s))<0) return -1;
+		} else if ((w=getint(&s))<0) goto overflow;
 
 		/* Read precision */
 		if (*s=='.' && s[1]=='*') {
@@ -485,25 +639,36 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			} else if (!l10n) {
 				p = f ? va_arg(*ap, int) : 0;
 				s+=2;
-			} else return -1;
+			} else goto inval;
+			xp = (p>=0);
 		} else if (*s=='.') {
 			s++;
 			p = getint(&s);
-		} else p = -1;
+			xp = 1;
+		} else {
+			p = -1;
+			xp = 0;
+		}
 
 		/* Format specifier state machine */
+		/* Code uses a state machine to figure out how big a
+		 * specific argument is depending on its specifiers;
+		 * for example it is used to give different sizes if
+		 * an argument is tagged as lu (ULONG) vs u (UINT).
+		 * st = current state.
+		 * ps = previous state. Mainly used to figure out
+		 *      the size of a pointer for n*/
 		st=0;
 		do {
-			if (OOB(*s)) return -1;
+			if (OOB(*s)) goto inval;
 			ps=st;
 			st=states[st]S(*s++);
 		} while (st-1<STOP);
-		if (!st) return -1;
+		if (!st) goto inval;
 
 		/* Check validity of argument type (nl/normal) */
 		if (st==NOARG) {
-			if (argpos>=0) return -1;
-			else if (!f) continue;
+			if (argpos>=0) goto inval;
 		} else {
 			if (argpos>=0) nl_type[argpos]=st, arg=nl_arg[argpos];
 			else if (f) pop_arg(&arg, st, ap);
@@ -526,13 +691,13 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 		switch(t) {
 		case 'n':
 			switch(ps) {
-			case BARE: *(int *)arg.p = l;
-			case LPRE: *(long *)arg.p = l;
-			case LLPRE: *(long long *)arg.p = l;
-			case HPRE: *(unsigned short *)arg.p = l;
-			case HHPRE: *(unsigned char *)arg.p = l;
-			case ZTPRE: *(size_t *)arg.p = l;
-			case JPRE: *(uintmax_t *)arg.p = l;
+			case BARE: *(int *)arg.p = cnt; break;
+			case LPRE: *(long *)arg.p = cnt; break;
+			case LLPRE: *(long long *)arg.p = cnt; break;
+			case HPRE: *(unsigned short *)arg.p = cnt; break;
+			case HHPRE: *(unsigned char *)arg.p = cnt; break;
+			case ZTPRE: *(size_t *)arg.p = cnt; break;
+			case JPRE: *(uintmax_t *)arg.p = cnt; break;
 			}
 			continue;
 		case 'p':
@@ -540,12 +705,21 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			t = 'x';
 			fl |= ALT_FORM;
 		case 'x': case 'X':
-			a = fmt_x(arg.i, z, t&32);
-			if (fl & ALT_FORM) prefix+=(t>>4), pl=2;
+			/*z is a reverse pointer to the char buffer 'buf'*/
+			if (should_filter_number(arg.i, &s, filtered_on_release, use_filter_modifiers)) {
+				a = fmt_filter(arg.i, z);
+			} else {
+				a = fmt_x(arg.i, z, t&32);
+			}
+			if (arg.i && (fl & ALT_FORM)) prefix+=(t>>4), pl=2;
 			if (0) {
 		case 'o':
-			a = fmt_o(arg.i, z);
-			if ((fl&ALT_FORM) && arg.i) prefix+=5, pl=1;
+			if (should_filter_number(arg.i, &s, filtered_on_release, use_filter_modifiers)) {
+				a = fmt_filter(arg.i, z);
+			} else {
+				a = fmt_o(arg.i, z);
+			}
+			if ((fl&ALT_FORM) && p<z-a+1) p=z-a+1;
 			} if (0) {
 		case 'd': case 'i':
 			pl=1;
@@ -557,10 +731,25 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 				prefix+=2;
 			} else pl=0;
 		case 'u':
-			a = fmt_u(arg.i, z);
+			if (should_filter_number(arg.i, &s, filtered_on_release, use_filter_modifiers)) {
+				/* Removing any (i.e. negative) prefix on filtered
+			 	 * int prints pl is the length of the prefix to be
+				 * printed.*/
+				pl = 0;
+				a = fmt_filter(arg.i, z);
+			} else {
+				a = fmt_u(arg.i, z);
 			}
-			if (!arg.i && !p) continue;
-			if (p>=0) fl &= ~ZERO_PAD;
+			}
+			/*xp and p are set by the set precision code.
+			 * xp: use precision
+			 * p: precision*/
+			if (xp && p<0) goto overflow;
+			if (xp) fl &= ~ZERO_PAD;
+			if (!arg.i && !p) {
+				a=z;
+				break;
+			}
 			p = MAX(p, z-a + !arg.i);
 			break;
 		case 'c':
@@ -568,14 +757,28 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			fl &= ~ZERO_PAD;
 			break;
 		case 'm':
+#if STDIO_NO_FORMAT_M == 1
+			if (1) a = "(disabled)"; else
+#else
 			if (1) a = strerror(errno); else
+#endif
 		case 's':
-			a = arg.p;
-			z = memchr(a, 0, p);
-			if (!z) z=a+p;
-			else p=z-a;
+			a = arg.p ? arg.p : "(null)";
+			z = a + strnlen(a, p<0 ? INT_MAX : p);
+			if (p<0 && *z) goto overflow;
+			p = z-a;
 			fl &= ~ZERO_PAD;
 			break;
+#if STDIO_NO_FORMAT_WIDE == 1
+		case 'C':
+		case 'S':
+			a = "(disabled)";
+			z = a + strnlen(a, p<0 ? INT_MAX : p);
+			if (p<0 && *z) goto overflow;
+			p = z-a;
+			fl &= ~ZERO_PAD;
+			break;
+#else
 		case 'C':
 			wc[0] = arg.i;
 			wc[1] = 0;
@@ -583,24 +786,44 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 			p = -1;
 		case 'S':
 			ws = arg.p;
-			for (i=0; *ws && (l=wctomb(mb, *ws++))>=0 && l<=0U+p-i; i+=l);
+			for (i=l=0; i<p && *ws && (l=wctomb(mb, *ws++))>=0 && l<=p-i; i+=l);
 			if (l<0) return -1;
+			if (i > INT_MAX) goto overflow;
 			p = i;
 			pad(f, ' ', w, p, fl);
 			ws = arg.p;
-			for (i=0; *ws && i+(l=wctomb(mb, *ws++))<=p; i+=l)
+			for (i=0; i<0U+p && *ws && i+(l=wctomb(mb, *ws++))<=p; i+=l)
 				out(f, mb, l);
 			pad(f, ' ', w, p, fl^LEFT_ADJ);
 			l = w>p ? w : p;
 			continue;
+#endif
 		case 'e': case 'f': case 'g': case 'a':
 		case 'E': case 'F': case 'G': case 'A':
+#if STDIO_FLOAT == 0
+			a = "(disabled)";
+			z = a + strnlen(a, p<0 ? INT_MAX : p);
+			if (p<0 && *z) goto overflow;
+			p = z-a;
+			fl &= ~ZERO_PAD;
+			break;
+#else
+			if (xp && p<0) goto overflow;
+#if !WITH_NO_FP
 			l = fmt_fp(f, arg.f, w, p, fl, t);
+#else
+			fputs("Floating point code is not supported\n", stderr);
+			abort();
+#endif
+			if (l<0) goto overflow;
 			continue;
+#endif
 		}
 
 		if (p < z-a) p = z-a;
+		if (p > INT_MAX-pl) goto overflow;
 		if (w < pl+p) w = pl+p;
+		if (w > INT_MAX-cnt) goto overflow;
 
 		pad(f, ' ', w, pl+p, fl);
 		out(f, prefix, pl);
@@ -618,22 +841,53 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
 	for (i=1; i<=NL_ARGMAX && nl_type[i]; i++)
 		pop_arg(nl_arg+i, nl_type[i], ap);
 	for (; i<=NL_ARGMAX && !nl_type[i]; i++);
-	if (i<=NL_ARGMAX) return -1;
+	if (i<=NL_ARGMAX) goto inval;
 	return 1;
+
+inval:
+	errno = EINVAL;
+	return -1;
+overflow:
+	errno = EOVERFLOW;
+	return -1;
 }
 
-int vfprintf(FILE *f, const char *fmt, va_list ap)
+int vfprintf_worker(FILE *restrict f, const char *restrict fmt, va_list ap, int filtered_on_release)
 {
 	va_list ap2;
-	int nl_type[NL_ARGMAX] = {0};
-	union arg nl_arg[NL_ARGMAX];
+	int nl_type[NL_ARGMAX+1] = {0};
+	union arg nl_arg[NL_ARGMAX+1];
+	unsigned char internal_buf[80], *saved_buf = 0;
+	int olderr;
 	int ret;
 
+	/* the copy allows passing va_list* even if va_list is an array */
 	va_copy(ap2, ap);
-	if (printf_core(0, fmt, &ap2, nl_arg, nl_type) < 0) return -1;
+	if (printf_core(0, fmt, &ap2, nl_arg, nl_type, filtered_on_release) < 0) {
+		va_end(ap2);
+		return -1;
+	}
 
 	FLOCK(f);
-	ret = printf_core(f, fmt, &ap2, nl_arg, nl_type);
+	olderr = f->flags & F_ERR;
+	if (f->mode < 1) f->flags &= ~F_ERR;
+	if (!f->buf_size) {
+		saved_buf = f->buf;
+		f->buf = internal_buf;
+		f->buf_size = sizeof internal_buf;
+		f->wpos = f->wbase = f->wend = 0;
+	}
+	if (!f->wend && __towrite(f)) ret = -1;
+	else ret = printf_core(f, fmt, &ap2, nl_arg, nl_type, filtered_on_release);
+	if (saved_buf) {
+		f->write(f, 0, 0);
+		if (!f->wpos) ret = -1;
+		f->buf = saved_buf;
+		f->buf_size = 0;
+		f->wpos = f->wbase = f->wend = 0;
+	}
+	if (f->flags & F_ERR) ret = -1;
+	f->flags |= olderr;
 	FUNLOCK(f);
 	va_end(ap2);
 	return ret;

@@ -14,20 +14,20 @@ long fpathconf(int fd, int name)
 		[_PC_CHOWN_RESTRICTED] = 1,
 		[_PC_NO_TRUNC] = 1,
 		[_PC_VDISABLE] = 0,
-		[_PC_SYNC_IO] = 0,
-		[_PC_ASYNC_IO] = 0,
-		[_PC_PRIO_IO] = 0,
+		[_PC_SYNC_IO] = 1,
+		[_PC_ASYNC_IO] = -1,
+		[_PC_PRIO_IO] = -1,
 		[_PC_SOCK_MAXBUF] = -1,
-		[_PC_FILESIZEBITS] = sizeof(off_t),
-		[_PC_REC_INCR_XFER_SIZE] = PAGE_SIZE,
-		[_PC_REC_MAX_XFER_SIZE] = PAGE_SIZE,
-		[_PC_REC_MIN_XFER_SIZE] = PAGE_SIZE,
-		[_PC_REC_XFER_ALIGN] = PAGE_SIZE,
-		[_PC_ALLOC_SIZE_MIN] = PAGE_SIZE,
-		[_PC_SYMLINK_MAX] = SYMLINK_MAX,
+		[_PC_FILESIZEBITS] = FILESIZEBITS,
+		[_PC_REC_INCR_XFER_SIZE] = 4096,
+		[_PC_REC_MAX_XFER_SIZE] = 4096,
+		[_PC_REC_MIN_XFER_SIZE] = 4096,
+		[_PC_REC_XFER_ALIGN] = 4096,
+		[_PC_ALLOC_SIZE_MIN] = 4096,
+		[_PC_SYMLINK_MAX] = -1,
 		[_PC_2_SYMLINKS] = 1
 	};
-	if (name > sizeof(values)/sizeof(values[0])) {
+	if (name >= sizeof(values)/sizeof(values[0])) {
 		errno = EINVAL;
 		return -1;
 	}

@@ -1,11 +1,13 @@
-#include <unistd.h>
 #include <sys/mman.h>
 #include "syscall.h"
-#include "libc.h"
+
+static void dummy(void) { }
+weak_alias(dummy, __vm_wait);
 
 int __munmap(void *start, size_t len)
 {
-	return syscall2(__NR_munmap, (long)start, len);
+	__vm_wait();
+	return syscall(SYS_munmap, start, len);
 }
 
 weak_alias(__munmap, munmap);

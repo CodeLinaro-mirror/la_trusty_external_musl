@@ -1,37 +1,33 @@
 #include "pwf.h"
+#include <pthread.h>
 
 #define FIX(x) (pw->pw_##x = pw->pw_##x-line+buf)
 
 static int getpw_r(const char *name, uid_t uid, struct passwd *pw, char *buf, size_t size, struct passwd **res)
 {
-	FILE *f;
 	char *line = 0;
 	size_t len = 0;
 	int rv = 0;
+	int cs;
 
-	f = fopen("/etc/passwd", "rb");
-	if (!f) return errno;
+	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 
-	*res = 0;
-	while (__getpwent_a(f, pw, &line, &len)) {
-		if (name && !strcmp(name, pw->pw_name)
-		|| !name && pw->pw_uid == uid) {
-			if (size < len) {
-				rv = ERANGE;
-				break;
-			}
-			*res = pw;
-			memcpy(buf, line, len);
-			FIX(name);
-			FIX(passwd);
-			FIX(gecos);
-			FIX(dir);
-			FIX(shell);
-			break;
-		}
+	rv = __getpw_a(name, uid, pw, &line, &len, res);
+	if (*res && size < len) {
+		*res = 0;
+		rv = ERANGE;
+	}
+	if (*res) {
+		memcpy(buf, line, len);
+		FIX(name);
+		FIX(passwd);
+		FIX(gecos);
+		FIX(dir);
+		FIX(shell);
 	}
  	free(line);
-	fclose(f);
+	pthread_setcancelstate(cs, 0);
+	if (rv) errno = rv;
 	return rv;
 }
 

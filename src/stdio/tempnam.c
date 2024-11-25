@@ -1,42 +1,48 @@
 #include <stdio.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <limits.h>
 #include <string.h>
 #include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <limits.h>
-#include <errno.h>
-#include "libc.h"
+#include "syscall.h"
+
+#define MAXTRIES 100
 
 char *tempnam(const char *dir, const char *pfx)
 {
-	static int lock;
-	static int index;
-	char *s;
-	int pid = getpid();
-	int l;
+	char s[PATH_MAX];
+	size_t l, dl, pl;
+	int try;
+	int r;
 
 	if (!dir) dir = P_tmpdir;
 	if (!pfx) pfx = "temp";
 
-	if (access(dir, R_OK|W_OK|X_OK) != 0)
-		return NULL;
+	dl = strlen(dir);
+	pl = strlen(pfx);
+	l = dl + 1 + pl + 1 + 6;
 
-	l = strlen(dir) + 1 + strlen(pfx) + 2 + sizeof(int)*3*2 + 1;
-	s = malloc(l);
-	if (!s) {
-		errno = ENOMEM;
-		return NULL;
+	if (l >= PATH_MAX) {
+		errno = ENAMETOOLONG;
+		return 0;
 	}
 
-	LOCK(&lock);
-	for (; index < TMP_MAX; index++) {
-		snprintf(s, l, "%s/%s-%d-%d", dir, pfx, pid, index);
-		if (access(s, F_OK) != 0) {
-			UNLOCK(&lock);
-			return s;
-		}
+	memcpy(s, dir, dl);
+	s[dl] = '/';
+	memcpy(s+dl+1, pfx, pl);
+	s[dl+1+pl] = '_';
+	s[l] = 0;
+
+	for (try=0; try<MAXTRIES; try++) {
+		__randname(s+l-6);
+#ifdef SYS_lstat
+		r = __syscall(SYS_lstat, s, &(struct stat){0});
+#else
+		r = __syscall(SYS_fstatat, AT_FDCWD, s,
+			&(struct stat){0}, AT_SYMLINK_NOFOLLOW);
+#endif
+		if (r == -ENOENT) return strdup(s);
 	}
-	UNLOCK(&lock);
-	free(s);
-	return NULL;	
+	return 0;
 }

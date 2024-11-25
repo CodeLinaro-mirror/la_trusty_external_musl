@@ -1,8 +1,13 @@
 #include <stdlib.h>
-#include <signal.h>
+#include "atomic.h"
 
-void abort(void)
+#include <trusty_syscalls.h>
+
+_Noreturn void abort(void)
 {
-	raise(SIGABRT);
-	for (;;);
+	_trusty_exit_etc(127, 0);
+
+	/* Beyond this point should be unreachable. */
+	a_crash();
+	_Exit(127);
 }
