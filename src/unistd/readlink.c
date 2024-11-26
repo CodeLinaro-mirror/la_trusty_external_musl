@@ -1,7 +1,12 @@
 #include <unistd.h>
+#include <fcntl.h>
 #include "syscall.h"
 
-int readlink(const char *path, char *buf, size_t bufsize)
+ssize_t readlink(const char *restrict path, char *restrict buf, size_t bufsize)
 {
-	return syscall3(__NR_readlink, (long)path, (long)buf, bufsize);
+#ifdef SYS_readlink
+	return syscall(SYS_readlink, path, buf, bufsize);
+#else
+	return syscall(SYS_readlinkat, AT_FDCWD, path, buf, bufsize);
+#endif
 }

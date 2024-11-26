@@ -1,10 +1,12 @@
 #include <sys/stat.h>
+#include <fcntl.h>
 #include "syscall.h"
 
 int mknod(const char *path, mode_t mode, dev_t dev)
 {
-	/* since dev_t is system-specific anyway we defer to the idiotic
-	 * legacy-compatible bitfield mapping of the type.. at least we've
-	 * made it large enough to leave space for future expansion.. */
-	return syscall3(__NR_mknod, (long)path, mode, dev & 0xffff);
+#ifdef SYS_mknod
+	return syscall(SYS_mknod, path, mode, dev);
+#else
+	return syscall(SYS_mknodat, AT_FDCWD, path, mode, dev);
+#endif
 }

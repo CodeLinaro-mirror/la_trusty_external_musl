@@ -4,33 +4,20 @@
 extern "C" {
 #endif
 
+#include <features.h>
+
 #include <signal.h>
 
-struct __fpstate {
-	unsigned long __x[7];
-	unsigned char __y[80];
-	unsigned long __z;
-};
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define NGREG (sizeof(gregset_t)/sizeof(greg_t))
+#endif
 
-typedef struct {
-	unsigned long __gregs[19];
-	void *__fpregs;
-	unsigned long __oldmask, __cr2;
-} mcontext_t;
+struct __ucontext;
 
-typedef struct __ucontext {
-	unsigned long uc_flags;
-	struct __ucontext *uc_link;
-	stack_t uc_stack;
-	mcontext_t uc_mcontext;
-	sigset_t uc_sigmask;
-	struct __fpstate __fpregs_mem;
-} ucontext_t;
-
-int  getcontext(ucontext_t *);
-void makecontext(ucontext_t *, void (*)(void), int, ...);
-int  setcontext(const ucontext_t *);
-int  swapcontext(ucontext_t *, const ucontext_t *);
+int  getcontext(struct __ucontext *);
+void makecontext(struct __ucontext *, void (*)(), int, ...);
+int  setcontext(const struct __ucontext *);
+int  swapcontext(struct __ucontext *, const struct __ucontext *);
 
 #ifdef __cplusplus
 }

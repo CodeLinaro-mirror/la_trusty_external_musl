@@ -4,6 +4,8 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
+
 #define PTRACE_TRACEME 0
 #define PT_TRACE_ME PTRACE_TRACEME
 
@@ -29,6 +31,16 @@ extern "C" {
 #define PTRACE_GETEVENTMSG 0x4201
 #define PTRACE_GETSIGINFO 0x4202
 #define PTRACE_SETSIGINFO 0x4203
+#define PTRACE_GETREGSET 0x4204
+#define PTRACE_SETREGSET 0x4205
+#define PTRACE_SEIZE 0x4206
+#define PTRACE_INTERRUPT 0x4207
+#define PTRACE_LISTEN 0x4208
+#define PTRACE_PEEKSIGINFO 0x4209
+#define PTRACE_GETSIGMASK 0x420a
+#define PTRACE_SETSIGMASK 0x420b
+#define PTRACE_SECCOMP_GET_FILTER 0x420c
+#define PTRACE_SECCOMP_GET_METADATA 0x420d
 
 #define PT_READ_I PTRACE_PEEKTEXT
 #define PT_READ_D PTRACE_PEEKDATA
@@ -60,7 +72,10 @@ extern "C" {
 #define PTRACE_O_TRACEEXEC      0x00000010
 #define PTRACE_O_TRACEVFORKDONE 0x00000020
 #define PTRACE_O_TRACEEXIT      0x00000040
-#define PTRACE_O_MASK           0x0000007f
+#define PTRACE_O_TRACESECCOMP   0x00000080
+#define PTRACE_O_EXITKILL       0x00100000
+#define PTRACE_O_SUSPEND_SECCOMP 0x00200000
+#define PTRACE_O_MASK           0x003000ff
 
 #define PTRACE_EVENT_FORK 1
 #define PTRACE_EVENT_VFORK 2
@@ -68,8 +83,25 @@ extern "C" {
 #define PTRACE_EVENT_EXEC 4
 #define PTRACE_EVENT_VFORK_DONE 5
 #define PTRACE_EVENT_EXIT 6
+#define PTRACE_EVENT_SECCOMP 7
+#define PTRACE_EVENT_STOP 128
 
-long int ptrace(int, ...);
+#define PTRACE_PEEKSIGINFO_SHARED 1
+
+#include <bits/ptrace.h>
+
+struct __ptrace_peeksiginfo_args {
+	uint64_t off;
+	uint32_t flags;
+	int32_t nr;
+};
+
+struct __ptrace_seccomp_metadata {
+	uint64_t filter_off;
+	uint64_t flags;
+};
+
+long ptrace(int, ...);
 
 #ifdef __cplusplus
 }

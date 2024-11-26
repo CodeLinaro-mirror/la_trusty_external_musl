@@ -1,50 +1,47 @@
 #include "stdio_impl.h"
 
-static int __fflush_unlocked(FILE *f)
-{
-	/* If writing, flush output. */
-	if (f->wpos > f->buf && __oflow(f)) return -1;
-
-	/* If reading, sync position, per POSIX */
-	if (f->rpos < f->rend) f->seek(f, f->rpos-f->rend, SEEK_CUR);
-	f->rpos = f->rend;
-
-	/* Hook for special behavior on flush */
-	if (f->flush) f->flush(f);
-
-	return (f->flags & F_ERR) ? EOF : 0;
-}
-
 /* stdout.c will override this if linked */
-static FILE *const __dummy = 0;
-weak_alias(__dummy, __stdout_to_flush);
+static FILE *volatile dummy = 0;
+weak_alias(dummy, __stdout_used);
+weak_alias(dummy, __stderr_used);
 
 int fflush(FILE *f)
 {
-	int r;
-	FILE *next;
+	if (!f) {
+		int r = 0;
+		if (__stdout_used) r |= fflush(__stdout_used);
+		if (__stderr_used) r |= fflush(__stderr_used);
 
-	if (f) {
-		FLOCK(f);
-		r = __fflush_unlocked(f);
-		FUNLOCK(f);
+		for (f=*__ofl_lock(); f; f=f->next) {
+			FLOCK(f);
+			if (f->wpos != f->wbase) r |= fflush(f);
+			FUNLOCK(f);
+		}
+		__ofl_unlock();
+
 		return r;
 	}
 
-	r = __stdout_to_flush ? fflush(__stdout_to_flush) : 0;
+	FLOCK(f);
 
-	OFLLOCK();
-	for (f=ofl_head; f; f=next) {
-		FLOCK(f);
-		OFLUNLOCK();
-		r |= __fflush_unlocked(f);
-		OFLLOCK();
-		next = f->next;
-		FUNLOCK(f);
+	/* If writing, flush output */
+	if (f->wpos != f->wbase) {
+		f->write(f, 0, 0);
+		if (!f->wpos) {
+			FUNLOCK(f);
+			return EOF;
+		}
 	}
-	OFLUNLOCK();
-	
-	return r;
+
+	/* If reading, sync position, per POSIX */
+	if (f->rpos != f->rend) f->seek(f, f->rpos-f->rend, SEEK_CUR);
+
+	/* Clear read and write modes */
+	f->wpos = f->wbase = f->wend = 0;
+	f->rpos = f->rend = 0;
+
+	FUNLOCK(f);
+	return 0;
 }
 
-weak_alias(__fflush_unlocked, fflush_unlocked);
+weak_alias(fflush, fflush_unlocked);

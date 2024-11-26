@@ -1,14 +1,16 @@
 #include "stdio_impl.h"
 
-int vdprintf(int fd, const char *fmt, va_list ap)
+static size_t wrap_write(FILE *f, const unsigned char *buf, size_t len)
 {
-	int r;
-	char buf[BUFSIZ];
+	return __stdio_write(f, buf, len);
+}
+
+int vdprintf(int fd, const char *restrict fmt, va_list ap)
+{
 	FILE f = {
-		.fd = fd, .lbf = EOF, .write = __stdio_write,
-		.buf = buf+UNGET, .buf_size = sizeof buf - UNGET
+		.fd = fd, .lbf = EOF, .write = wrap_write,
+		.buf = (void *)fmt, .buf_size = 0,
+		.lock = -1
 	};
-	r = vfprintf(&f, fmt, ap);
-	__oflow(&f);
-	return r;
+	return vfprintf(&f, fmt, ap);
 }

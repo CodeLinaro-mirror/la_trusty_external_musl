@@ -2,9 +2,10 @@
 
 int pthread_setcanceltype(int new, int *old)
 {
-	struct pthread *self = pthread_self();
+	struct pthread *self = __pthread_self();
+	if (new > 1U) return EINVAL;
 	if (old) *old = self->cancelasync;
-	if ((unsigned)new > 1) return EINVAL;
 	self->cancelasync = new;
+	if (new) pthread_testcancel();
 	return 0;
 }

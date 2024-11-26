@@ -1,10 +1,7 @@
-#include "stdio_impl.h"
+#include <stdio.h>
+#include "putc.h"
 
 int fputc(int c, FILE *f)
 {
-	FLOCK(f);
-	if (c != f->lbf && f->wpos + 1 < f->wend) *f->wpos++ = c;
-	else c = __overflow(f, c);
-	FUNLOCK(f);
-	return c;
+	return do_putc(c, f);
 }

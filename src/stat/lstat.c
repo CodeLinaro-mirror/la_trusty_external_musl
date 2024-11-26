@@ -1,10 +1,14 @@
 #include <sys/stat.h>
+#include <fcntl.h>
 #include "syscall.h"
-#include "libc.h"
 
-int lstat(const char *path, struct stat *buf)
+int lstat(const char *restrict path, struct stat *restrict buf)
 {
-	return syscall2(__NR_lstat64, (long)path, (long)buf);
+#ifdef SYS_lstat
+	return syscall(SYS_lstat, path, buf);
+#else
+	return syscall(SYS_fstatat, AT_FDCWD, path, buf, AT_SYMLINK_NOFOLLOW);
+#endif
 }
 
-LFS64(lstat);
+weak_alias(lstat, lstat64);

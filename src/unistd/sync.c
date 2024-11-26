@@ -3,5 +3,5 @@
 
 void sync(void)
 {
-	syscall0(__NR_sync);
+	__syscall(SYS_sync);
 }

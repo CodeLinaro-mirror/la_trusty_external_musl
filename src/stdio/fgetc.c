@@ -1,10 +1,7 @@
-#include "stdio_impl.h"
+#include <stdio.h>
+#include "getc.h"
 
 int fgetc(FILE *f)
 {
-	int c;
-	FLOCK(f);
-	c = f->rpos < f->rstop ? *f->rpos++ : __uflow(f);
-	FUNLOCK(f);
-	return c;
+	return do_getc(f);
 }

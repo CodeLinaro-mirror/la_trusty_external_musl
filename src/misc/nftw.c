@@ -2,12 +2,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <errno.h>
-#include <stdlib.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include <limits.h>
-#include "libc.h"
+#include <pthread.h>
 
 struct history
 {
@@ -29,7 +27,6 @@ static int do_nftw(char *path, int (*fn)(const char *, const struct stat *, int,
 	int type;
 	int r;
 	struct FTW lev;
-	char *name;
 
 	if ((flags & FTW_PHYS) ? lstat(path, &st) : stat(path, &st) < 0) {
 		if (!(flags & FTW_PHYS) && errno==ENOENT && !lstat(path, &st))
@@ -47,18 +44,24 @@ static int do_nftw(char *path, int (*fn)(const char *, const struct stat *, int,
 		type = FTW_F;
 	}
 
-	if ((flags & FTW_MOUNT) && h
-	 && (st.st_dev != h->dev || st.st_ino != h->ino))
+	if ((flags & FTW_MOUNT) && h && st.st_dev != h->dev)
 		return 0;
 	
 	new.chain = h;
 	new.dev = st.st_dev;
 	new.ino = st.st_ino;
 	new.level = h ? h->level+1 : 0;
-	new.base = l+1;
+	new.base = j+1;
 	
 	lev.level = new.level;
-	lev.base = h ? h->base : (name=strrchr(path, '/')) ? name-path : 0;
+	if (h) {
+		lev.base = h->base;
+	} else {
+		size_t k;
+		for (k=j; k && path[k]=='/'; k--);
+		for (; k && path[k-1]!='/'; k--);
+		lev.base = k;
+	}
 
 	if (!(flags & FTW_DEPTH) && (r=fn(path, &st, type, &lev)))
 		return r;
@@ -103,6 +106,7 @@ static int do_nftw(char *path, int (*fn)(const char *, const struct stat *, int,
 
 int nftw(const char *path, int (*fn)(const char *, const struct stat *, int, struct FTW *), int fd_limit, int flags)
 {
+	int r, cs;
 	size_t l;
 	char pathbuf[PATH_MAX+1];
 
@@ -115,7 +119,10 @@ int nftw(const char *path, int (*fn)(const char *, const struct stat *, int, str
 	}
 	memcpy(pathbuf, path, l+1);
 	
-	return do_nftw(pathbuf, fn, fd_limit, flags, NULL);
+	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+	r = do_nftw(pathbuf, fn, fd_limit, flags, NULL);
+	pthread_setcancelstate(cs, 0);
+	return r;
 }
 
-LFS64(nftw);
+weak_alias(nftw, nftw64);

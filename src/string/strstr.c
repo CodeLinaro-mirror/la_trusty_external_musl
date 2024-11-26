@@ -1,5 +1,4 @@
 #include <string.h>
-#include <stdlib.h>
 #include <stdint.h>
 
 static char *twobyte_strstr(const unsigned char *h, const unsigned char *n)
@@ -25,18 +24,12 @@ static char *fourbyte_strstr(const unsigned char *h, const unsigned char *n)
 	return *h ? (char *)h-3 : 0;
 }
 
-#if 0
-static char *naive_strstr(const char *h, const char *n)
-{
-	size_t i;
-	for (i=0; n[i] && h[i]; i++)
-	for (   ; n[i] != h[i]; h++, i=0);
-	return n[i] ? 0 : (char *)h;
-}
-#endif
-
+#ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
+#ifndef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
+#endif
 
 #define BITOP(a,b,op) \
  ((a)[(size_t)(b)/(8*sizeof *(a))] op (size_t)1<<((size_t)(b)%(8*sizeof *(a))))
@@ -109,7 +102,7 @@ static char *twoway_strstr(const unsigned char *h, const unsigned char *n)
 		if (z-h < l) {
 			/* Fast estimate for MIN(l,63) */
 			size_t grow = l | 63;
-			const char *z2 = memchr(z, 0, grow);
+			const unsigned char *z2 = memchr(z, 0, grow);
 			if (z2) {
 				z = z2;
 				if (z-h < l) return 0;
@@ -119,9 +112,8 @@ static char *twoway_strstr(const unsigned char *h, const unsigned char *n)
 		/* Check last byte first; advance by shift on mismatch */
 		if (BITOP(byteset, h[l-1], &)) {
 			k = l-shift[h[l-1]];
-			//printf("adv by %zu (on %c) at [%s] (%zu;l=%zu)\n", k, h[l-1], h, shift[h[l-1]], l);
 			if (k) {
-				if (mem0 && mem && k < p) k = l-p;
+				if (k < mem) k = mem;
 				h += k;
 				mem = 0;
 				continue;
@@ -141,7 +133,7 @@ static char *twoway_strstr(const unsigned char *h, const unsigned char *n)
 		}
 		/* Compare left half */
 		for (k=ms+1; k>mem && n[k-1] == h[k-1]; k--);
-		if (k == mem) return (char *)h;
+		if (k <= mem) return (char *)h;
 		h += p;
 		mem = mem0;
 	}
@@ -156,11 +148,11 @@ char *strstr(const char *h, const char *n)
 	h = strchr(h, *n);
 	if (!h || !n[1]) return (char *)h;
 	if (!h[1]) return 0;
-	if (!n[2]) return twobyte_strstr(h, n);
+	if (!n[2]) return twobyte_strstr((void *)h, (void *)n);
 	if (!h[2]) return 0;
-	if (!n[3]) return threebyte_strstr(h, n);
+	if (!n[3]) return threebyte_strstr((void *)h, (void *)n);
 	if (!h[3]) return 0;
-	if (!n[4]) return fourbyte_strstr(h, n);
+	if (!n[4]) return fourbyte_strstr((void *)h, (void *)n);
 
-	return twoway_strstr(h, n);
+	return twoway_strstr((void *)h, (void *)n);
 }

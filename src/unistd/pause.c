@@ -1,12 +1,11 @@
 #include <unistd.h>
 #include "syscall.h"
-#include "libc.h"
 
 int pause(void)
 {
-	int r;
-	CANCELPT_BEGIN;
-	r = syscall0(__NR_pause);
-	CANCELPT_END;
-	return r;
+#ifdef SYS_pause
+	return syscall_cp(SYS_pause);
+#else
+	return syscall_cp(SYS_ppoll, 0, 0, 0, 0);
+#endif
 }

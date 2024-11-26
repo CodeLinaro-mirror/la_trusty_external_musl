@@ -1,21 +1,31 @@
 /*
   regexec.c - TRE POSIX compatible matching functions (and more).
 
-  Copyright (c) 2001-2006 Ville Laurikari <vl@iki.fi>.
+  Copyright (c) 2001-2009 Ville Laurikari <vl@iki.fi>
+  All rights reserved.
 
-  This library is free software; you can redistribute it and/or
-  modify it under the terms of the GNU Lesser General Public
-  License as published by the Free Software Foundation; either
-  version 2.1 of the License, or (at your option) any later version.
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions
+  are met:
 
-  This library is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-  Lesser General Public License for more details.
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
 
-  You should have received a copy of the GNU Lesser General Public
-  License along with this library; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+    2. Redistributions in binary form must reproduce the above copyright
+       notice, this list of conditions and the following disclaimer in the
+       documentation and/or other materials provided with the distribution.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER AND CONTRIBUTORS
+  ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+  A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT
+  HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 */
 
@@ -24,6 +34,7 @@
 #include <wchar.h>
 #include <wctype.h>
 #include <limits.h>
+#include <stdint.h>
 
 #include <regex.h>
 
@@ -33,7 +44,7 @@
 
 static void
 tre_fill_pmatch(size_t nmatch, regmatch_t pmatch[], int cflags,
-		const tre_tnfa_t *tnfa, int *tags, int match_eo);
+		const tre_tnfa_t *tnfa, regoff_t *tags, regoff_t match_eo);
 
 /***********************************************************************
  from tre-match-utils.h
@@ -42,11 +53,13 @@ tre_fill_pmatch(size_t nmatch, regmatch_t pmatch[], int cflags,
 #define GET_NEXT_WCHAR() do {                                                 \
     prev_c = next_c; pos += pos_add_next;                                     \
     if ((pos_add_next = mbtowc(&next_c, str_byte, MB_LEN_MAX)) <= 0) {        \
-        if (pos_add_next < 0) return REG_NOMATCH;                             \
+        if (pos_add_next < 0) { ret = REG_NOMATCH; goto error_exit; }         \
         else pos_add_next++;                                                  \
     }                                                                         \
     str_byte += pos_add_next;                                                 \
   } while (0)
+
+#define IS_WORD_CHAR(c)	 ((c) == L'_' || tre_isalnum(c))
 
 #define CHECK_ASSERTIONS(assertions)					      \
   (((assertions & ASSERT_AT_BOL)					      \
@@ -54,12 +67,37 @@ tre_fill_pmatch(size_t nmatch, regmatch_t pmatch[], int cflags,
     && (prev_c != L'\n' || !reg_newline))				      \
    || ((assertions & ASSERT_AT_EOL)					      \
        && (next_c != L'\0' || reg_noteol)				      \
-       && (next_c != L'\n' || !reg_newline)))
+       && (next_c != L'\n' || !reg_newline))				      \
+   || ((assertions & ASSERT_AT_BOW)					      \
+       && (IS_WORD_CHAR(prev_c) || !IS_WORD_CHAR(next_c)))	              \
+   || ((assertions & ASSERT_AT_EOW)					      \
+       && (!IS_WORD_CHAR(prev_c) || IS_WORD_CHAR(next_c)))		      \
+   || ((assertions & ASSERT_AT_WB)					      \
+       && (pos != 0 && next_c != L'\0'					      \
+	   && IS_WORD_CHAR(prev_c) == IS_WORD_CHAR(next_c)))		      \
+   || ((assertions & ASSERT_AT_WB_NEG)					      \
+       && (pos == 0 || next_c == L'\0'					      \
+	   || IS_WORD_CHAR(prev_c) != IS_WORD_CHAR(next_c))))
+
+#define CHECK_CHAR_CLASSES(trans_i, tnfa, eflags)                             \
+  (((trans_i->assertions & ASSERT_CHAR_CLASS)                                 \
+       && !(tnfa->cflags & REG_ICASE)                                         \
+       && !tre_isctype((tre_cint_t)prev_c, trans_i->u.class))                 \
+    || ((trans_i->assertions & ASSERT_CHAR_CLASS)                             \
+        && (tnfa->cflags & REG_ICASE)                                         \
+        && !tre_isctype(tre_tolower((tre_cint_t)prev_c),trans_i->u.class)     \
+	&& !tre_isctype(tre_toupper((tre_cint_t)prev_c),trans_i->u.class))    \
+    || ((trans_i->assertions & ASSERT_CHAR_CLASS_NEG)                         \
+        && tre_neg_char_classes_match(trans_i->neg_classes,(tre_cint_t)prev_c,\
+                                      tnfa->cflags & REG_ICASE)))
+
+
+
 
 /* Returns 1 if `t1' wins `t2', 0 otherwise. */
 static int
 tre_tag_order(int num_tags, tre_tag_direction_t *tag_directions,
-	      int *t1, int *t2)
+	      regoff_t *t1, regoff_t *t2)
 {
   int i;
   for (i = 0; i < num_tags; i++)
@@ -86,7 +124,6 @@ tre_tag_order(int num_tags, tre_tag_direction_t *tag_directions,
 static int
 tre_neg_char_classes_match(tre_ctype_t *classes, tre_cint_t wc, int icase)
 {
-  DPRINT(("neg_char_classes_test: %p, %d, %d\n", classes, wc, icase));
   while (*classes != (tre_ctype_t)0)
     if ((!icase && tre_isctype(wc, *classes))
 	|| (icase && (tre_isctype(tre_toupper(wc), *classes)
@@ -118,59 +155,34 @@ tre_neg_char_classes_match(tre_ctype_t *classes, tre_cint_t wc, int icase)
   See `tre-match-backtrack.c'.
 */
 
-
 typedef struct {
   tre_tnfa_transition_t *state;
-  int *tags;
+  regoff_t *tags;
 } tre_tnfa_reach_t;
 
 typedef struct {
-  int pos;
-  int **tags;
+  regoff_t pos;
+  regoff_t **tags;
 } tre_reach_pos_t;
 
 
-#ifdef TRE_DEBUG
-static void
-tre_print_reach(const tre_tnfa_t *tnfa, tre_tnfa_reach_t *reach, int num_tags)
-{
-  int i;
-
-  while (reach->state != NULL)
-    {
-      DPRINT((" %p", (void *)reach->state));
-      if (num_tags > 0)
-	{
-	  DPRINT(("/"));
-	  for (i = 0; i < num_tags; i++)
-	    {
-	      DPRINT(("%d:%d", i, reach->tags[i]));
-	      if (i < (num_tags-1))
-		DPRINT((","));
-	    }
-	}
-      reach++;
-    }
-  DPRINT(("\n"));
-
-}
-#endif /* TRE_DEBUG */
-
 static reg_errcode_t
-tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
-		      int *match_tags, int eflags, int *match_end_ofs)
+tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string,
+		      regoff_t *match_tags, int eflags,
+		      regoff_t *match_end_ofs)
 {
   /* State variables required by GET_NEXT_WCHAR. */
   tre_char_t prev_c = 0, next_c = 0;
   const char *str_byte = string;
-  int pos = -1;
-  int pos_add_next = 1;
+  regoff_t pos = -1;
+  regoff_t pos_add_next = 1;
 #ifdef TRE_MBSTATE
   mbstate_t mbstate;
 #endif /* TRE_MBSTATE */
   int reg_notbol = eflags & REG_NOTBOL;
   int reg_noteol = eflags & REG_NOTEOL;
   int reg_newline = tnfa->cflags & REG_NEWLINE;
+  reg_errcode_t ret;
 
   char *buf;
   tre_tnfa_transition_t *trans_i;
@@ -179,10 +191,10 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
   int *tag_i;
   int num_tags, i;
 
-  int match_eo = -1;	   /* end offset of match (-1 if no match found yet) */
+  regoff_t match_eo = -1;	   /* end offset of match (-1 if no match found yet) */
   int new_match = 0;
-  int *tmp_tags = NULL;
-  int *tmp_iptr;
+  regoff_t *tmp_tags = NULL;
+  regoff_t *tmp_iptr;
 
 #ifdef TRE_MBSTATE
   memset(&mbstate, '\0', sizeof(mbstate));
@@ -195,29 +207,37 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 
   /* Allocate memory for temporary data required for matching.	This needs to
      be done for every matching operation to be thread safe.  This allocates
-     everything in a single large block from the stack frame using alloca()
-     or with malloc() if alloca is unavailable. */
+     everything in a single large block with calloc(). */
   {
-    int tbytes, rbytes, pbytes, xbytes, total_bytes;
+    size_t tbytes, rbytes, pbytes, xbytes, total_bytes;
     char *tmp_buf;
+
+    /* Ensure that tbytes and xbytes*num_states cannot overflow, and that
+     * they don't contribute more than 1/8 of SIZE_MAX to total_bytes. */
+    if (num_tags > SIZE_MAX/(8 * sizeof(regoff_t) * tnfa->num_states))
+      return REG_ESPACE;
+
+    /* Likewise check rbytes. */
+    if (tnfa->num_states+1 > SIZE_MAX/(8 * sizeof(*reach_next)))
+      return REG_ESPACE;
+
+    /* Likewise check pbytes. */
+    if (tnfa->num_states > SIZE_MAX/(8 * sizeof(*reach_pos)))
+      return REG_ESPACE;
+
     /* Compute the length of the block we need. */
     tbytes = sizeof(*tmp_tags) * num_tags;
     rbytes = sizeof(*reach_next) * (tnfa->num_states + 1);
     pbytes = sizeof(*reach_pos) * tnfa->num_states;
-    xbytes = sizeof(int) * num_tags;
+    xbytes = sizeof(regoff_t) * num_tags;
     total_bytes =
       (sizeof(long) - 1) * 4 /* for alignment paddings */
       + (rbytes + xbytes * tnfa->num_states) * 2 + tbytes + pbytes;
 
     /* Allocate the memory. */
-#ifdef TRE_USE_ALLOCA
-    buf = alloca(total_bytes);
-#else /* !TRE_USE_ALLOCA */
-    buf = xmalloc(total_bytes);
-#endif /* !TRE_USE_ALLOCA */
+    buf = calloc(total_bytes, 1);
     if (buf == NULL)
       return REG_ESPACE;
-    memset(buf, 0, total_bytes);
 
     /* Get the various pointers within tmp_buf (properly aligned). */
     tmp_tags = (void *)buf;
@@ -247,17 +267,12 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
   GET_NEXT_WCHAR();
   pos = 0;
 
-  DPRINT(("length: %d\n", len));
-  DPRINT(("pos:chr/code | states and tags\n"));
-  DPRINT(("-------------+------------------------------------------------\n"));
-
   reach_next_i = reach_next;
   while (1)
     {
       /* If no match found yet, add the initial states to `reach_next'. */
       if (match_eo < 0)
 	{
-	  DPRINT((" init >"));
 	  trans_i = tnfa->initial;
 	  while (trans_i->state != NULL)
 	    {
@@ -266,12 +281,10 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 		  if (trans_i->assertions
 		      && CHECK_ASSERTIONS(trans_i->assertions))
 		    {
-		      DPRINT(("assertion failed\n"));
 		      trans_i++;
 		      continue;
 		    }
 
-		  DPRINT((" %p", (void *)trans_i->state));
 		  reach_next_i->state = trans_i->state;
 		  for (i = 0; i < num_tags; i++)
 		    reach_next_i->tags[i] = -1;
@@ -285,7 +298,6 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 		      }
 		  if (reach_next_i->state == tnfa->final)
 		    {
-		      DPRINT(("	 found empty match\n"));
 		      match_eo = pos;
 		      new_match = 1;
 		      for (i = 0; i < num_tags; i++)
@@ -297,7 +309,6 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 		}
 	      trans_i++;
 	    }
-	  DPRINT(("\n"));
 	  reach_next_i->state = NULL;
 	}
       else
@@ -312,17 +323,52 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 
       GET_NEXT_WCHAR();
 
-#ifdef TRE_DEBUG
-      DPRINT(("%3d:%2lc/%05d |", pos - 1, (tre_cint_t)prev_c, (int)prev_c));
-      tre_print_reach(tnfa, reach_next, num_tags);
-      DPRINT(("%3d:%2lc/%05d |", pos, (tre_cint_t)next_c, (int)next_c));
-      tre_print_reach(tnfa, reach_next, num_tags);
-#endif /* TRE_DEBUG */
-
       /* Swap `reach' and `reach_next'. */
       reach_i = reach;
       reach = reach_next;
       reach_next = reach_i;
+
+      /* For each state in `reach', weed out states that don't fulfill the
+	 minimal matching conditions. */
+      if (tnfa->num_minimals && new_match)
+	{
+	  new_match = 0;
+	  reach_next_i = reach_next;
+	  for (reach_i = reach; reach_i->state; reach_i++)
+	    {
+	      int skip = 0;
+	      for (i = 0; tnfa->minimal_tags[i] >= 0; i += 2)
+		{
+		  int end = tnfa->minimal_tags[i];
+		  int start = tnfa->minimal_tags[i + 1];
+		  if (end >= num_tags)
+		    {
+		      skip = 1;
+		      break;
+		    }
+		  else if (reach_i->tags[start] == match_tags[start]
+			   && reach_i->tags[end] < match_tags[end])
+		    {
+		      skip = 1;
+		      break;
+		    }
+		}
+	      if (!skip)
+		{
+		  reach_next_i->state = reach_i->state;
+		  tmp_iptr = reach_next_i->tags;
+		  reach_next_i->tags = reach_i->tags;
+		  reach_i->tags = tmp_iptr;
+		  reach_next_i++;
+		}
+	    }
+	  reach_next_i->state = NULL;
+
+	  /* Swap `reach' and `reach_next'. */
+	  reach_i = reach;
+	  reach = reach_next;
+	  reach_next = reach_i;
+	}
 
       /* For each state in `reach' see if there is a transition leaving with
 	 the current input symbol to a state not yet in `reach_next', and
@@ -333,28 +379,13 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 	  for (trans_i = reach_i->state; trans_i->state; trans_i++)
 	    {
 	      /* Does this transition match the input symbol? */
-	      if (trans_i->code_min <= prev_c &&
-		  trans_i->code_max >= prev_c)
+	      if (trans_i->code_min <= (tre_cint_t)prev_c &&
+		  trans_i->code_max >= (tre_cint_t)prev_c)
 		{
 		  if (trans_i->assertions
 		      && (CHECK_ASSERTIONS(trans_i->assertions)
-			  /* Handle character class transitions. */
-			  || ((trans_i->assertions & ASSERT_CHAR_CLASS)
-			      && !(tnfa->cflags & REG_ICASE)
-			      && !tre_isctype((tre_cint_t)prev_c,
-					      trans_i->u.class))
-			  || ((trans_i->assertions & ASSERT_CHAR_CLASS)
-			      && (tnfa->cflags & REG_ICASE)
-			      && (!tre_isctype(tre_tolower((tre_cint_t)prev_c),
-					       trans_i->u.class)
-				  && !tre_isctype(tre_toupper((tre_cint_t)prev_c),
-						  trans_i->u.class)))
-			  || ((trans_i->assertions & ASSERT_CHAR_CLASS_NEG)
-			      && tre_neg_char_classes_match(trans_i->neg_classes,
-							    (tre_cint_t)prev_c,
-							    tnfa->cflags & REG_ICASE))))
+			  || CHECK_CHAR_CLASSES(trans_i, tnfa, eflags)))
 		    {
-		      DPRINT(("assertion failed\n"));
 		      continue;
 		    }
 
@@ -385,7 +416,6 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 			      || (num_tags > 0
 				  && reach_next_i->tags[0] <= match_tags[0])))
 			{
-			  DPRINT(("  found match %p\n", trans_i->state));
 			  match_eo = pos;
 			  new_match = 1;
 			  for (i = 0; i < num_tags; i++)
@@ -409,7 +439,6 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 			  *reach_pos[trans_i->state_id].tags = tmp_tags;
 			  if (trans_i->state == tnfa->final)
 			    {
-			      DPRINT(("	 found better match\n"));
 			      match_eo = pos;
 			      new_match = 1;
 			      for (i = 0; i < num_tags; i++)
@@ -424,16 +453,13 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
       reach_next_i->state = NULL;
     }
 
-  DPRINT(("match end offset = %d\n", match_eo));
-
-#ifndef TRE_USE_ALLOCA
-  if (buf)
-    xfree(buf);
-#endif /* !TRE_USE_ALLOCA */
-
   *match_end_ofs = match_eo;
-  return match_eo >= 0 ? REG_OK : REG_NOMATCH;
+  ret = match_eo >= 0 ? REG_OK : REG_NOMATCH;
+error_exit:
+  xfree(buf);
+  return ret;
 }
+
 
 
 /***********************************************************************
@@ -464,12 +490,12 @@ tre_tnfa_run_parallel(const tre_tnfa_t *tnfa, const void *string, int len,
 */
 
 typedef struct {
-  int pos;
+  regoff_t pos;
   const char *str_byte;
   tre_tnfa_transition_t *state;
   int state_id;
   int next_c;
-  int *tags;
+  regoff_t *tags;
 #ifdef TRE_MBSTATE
   mbstate_t mbstate;
 #endif /* TRE_MBSTATE */
@@ -489,16 +515,9 @@ typedef struct tre_backtrack_struct {
 #define BT_STACK_MBSTATE_OUT
 #endif /* !TRE_MBSTATE */
 
-
-#ifdef TRE_USE_ALLOCA
-#define tre_bt_mem_new		  tre_mem_newa
-#define tre_bt_mem_alloc	  tre_mem_alloca
-#define tre_bt_mem_destroy(obj)	  do { } while (0)
-#else /* !TRE_USE_ALLOCA */
 #define tre_bt_mem_new		  tre_mem_new
 #define tre_bt_mem_alloc	  tre_mem_alloc
 #define tre_bt_mem_destroy	  tre_mem_destroy
-#endif /* !TRE_USE_ALLOCA */
 
 
 #define BT_STACK_PUSH(_pos, _str_byte, _str_wide, _state, _state_id, _next_c, _tags, _mbstate) \
@@ -567,19 +586,19 @@ typedef struct tre_backtrack_struct {
     }									      \
   while (0)
 
-#undef MIN
+#ifndef MIN
 #define MIN(a, b) ((a) <= (b) ? (a) : (b))
+#endif
 
 static reg_errcode_t
 tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
-		       int len, int *match_tags,
-		       int eflags, int *match_end_ofs)
+		       regoff_t *match_tags, int eflags, regoff_t *match_end_ofs)
 {
   /* State variables required by GET_NEXT_WCHAR. */
   tre_char_t prev_c = 0, next_c = 0;
   const char *str_byte = string;
-  int pos = 0;
-  int pos_add_next = 1;
+  regoff_t pos = 0;
+  regoff_t pos_add_next = 1;
 #ifdef TRE_MBSTATE
   mbstate_t mbstate;
 #endif /* TRE_MBSTATE */
@@ -592,18 +611,16 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
      started from. */
   int next_c_start;
   const char *str_byte_start;
-  int pos_start = -1;
+  regoff_t pos_start = -1;
 #ifdef TRE_MBSTATE
   mbstate_t mbstate_start;
 #endif /* TRE_MBSTATE */
 
-  /* Compilation flags for this regexp. */
-  int cflags = tnfa->cflags;
-
   /* End offset of best match so far, or -1 if no match found yet. */
-  int match_eo = -1;
+  regoff_t match_eo = -1;
   /* Tag arrays. */
-  int *next_tags, *tags = NULL;
+  int *next_tags;
+  regoff_t *tags = NULL;
   /* Current TNFA state. */
   tre_tnfa_transition_t *state;
   int *states_seen = NULL;
@@ -633,30 +650,33 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
   stack->prev = NULL;
   stack->next = NULL;
 
-#ifdef TRE_USE_ALLOCA
-  tags = alloca(sizeof(*tags) * tnfa->num_tags);
-  pmatch = alloca(sizeof(*pmatch) * tnfa->num_submatches);
-  states_seen = alloca(sizeof(*states_seen) * tnfa->num_states);
-#else /* !TRE_USE_ALLOCA */
-  tags = xmalloc(sizeof(*tags) * tnfa->num_tags);
-  if (!tags)
+  if (tnfa->num_tags)
     {
-      ret = REG_ESPACE;
-      goto error_exit;
+      tags = xmalloc(sizeof(*tags) * tnfa->num_tags);
+      if (!tags)
+	{
+	  ret = REG_ESPACE;
+	  goto error_exit;
+	}
     }
-  pmatch = xmalloc(sizeof(*pmatch) * tnfa->num_submatches);
-  if (!pmatch)
+  if (tnfa->num_submatches)
     {
-      ret = REG_ESPACE;
-      goto error_exit;
+      pmatch = xmalloc(sizeof(*pmatch) * tnfa->num_submatches);
+      if (!pmatch)
+	{
+	  ret = REG_ESPACE;
+	  goto error_exit;
+	}
     }
-  states_seen = xmalloc(sizeof(*states_seen) * tnfa->num_states);
-  if (!states_seen)
+  if (tnfa->num_states)
     {
-      ret = REG_ESPACE;
-      goto error_exit;
+      states_seen = xmalloc(sizeof(*states_seen) * tnfa->num_states);
+      if (!states_seen)
+	{
+	  ret = REG_ESPACE;
+	  goto error_exit;
+	}
     }
-#endif /* !TRE_USE_ALLOCA */
 
  retry:
   {
@@ -685,10 +705,8 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
   next_tags = NULL;
   for (trans_i = tnfa->initial; trans_i->state; trans_i++)
     {
-      DPRINT(("> init %p, prev_c %lc\n", trans_i->state, (tre_cint_t)prev_c));
       if (trans_i->assertions && CHECK_ASSERTIONS(trans_i->assertions))
 	{
-	  DPRINT(("assert failed\n"));
 	  continue;
 	}
       if (state == NULL)
@@ -700,8 +718,7 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
       else
 	{
 	  /* Backtrack to this state. */
-	  DPRINT(("saving state %d for backtracking\n", trans_i->state_id));
-	  BT_STACK_PUSH(pos, str_byte, str_wide, trans_i->state,
+	  BT_STACK_PUSH(pos, str_byte, 0, trans_i->state,
 			trans_i->state_id, next_c, tags, mbstate);
 	  {
 	    int *tmp = trans_i->tags;
@@ -717,22 +734,16 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
       tags[*next_tags] = pos;
 
 
-  DPRINT(("entering match loop, pos %d, str_byte %p\n", pos, str_byte));
-  DPRINT(("pos:chr/code | state and tags\n"));
-  DPRINT(("-------------+------------------------------------------------\n"));
-
   if (state == NULL)
     goto backtrack;
 
   while (1)
     {
-      tre_tnfa_transition_t *trans_i, *next_state;
+      tre_tnfa_transition_t *next_state;
       int empty_br_match;
 
-      DPRINT(("start loop\n"));
       if (state == tnfa->final)
 	{
-	  DPRINT(("  match found, %d %d\n", match_eo, pos));
 	  if (match_eo < pos
 	      || (match_eo == pos
 		  && match_tags
@@ -741,7 +752,6 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
 	    {
 	      int i;
 	      /* This match wins the previous match. */
-	      DPRINT(("	 win previous\n"));
 	      match_eo = pos;
 	      if (match_tags)
 		for (i = 0; i < tnfa->num_tags; i++)
@@ -752,17 +762,6 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
 	  goto backtrack;
 	}
 
-#ifdef TRE_DEBUG
-      DPRINT(("%3d:%2lc/%05d | %p ", pos, (tre_cint_t)next_c, (int)next_c,
-	      state));
-      {
-	int i;
-	for (i = 0; i < tnfa->num_tags; i++)
-	  DPRINT(("%d%s", tags[i], i < tnfa->num_tags - 1 ? ", " : ""));
-	DPRINT(("\n"));
-      }
-#endif /* TRE_DEBUG */
-
       /* Go to the next character in the input string. */
       empty_br_match = 0;
       trans_i = state;
@@ -771,30 +770,22 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
 	  /* This is a back reference state.  All transitions leaving from
 	     this state have the same back reference "assertion".  Instead
 	     of reading the next character, we match the back reference. */
-	  int so, eo, bt = trans_i->u.backref;
-	  int bt_len;
+	  regoff_t so, eo;
+	  int bt = trans_i->u.backref;
+	  regoff_t bt_len;
 	  int result;
 
-	  DPRINT(("  should match back reference %d\n", bt));
 	  /* Get the substring we need to match against.  Remember to
 	     turn off REG_NOSUB temporarily. */
-	  tre_fill_pmatch(bt + 1, pmatch, tnfa->cflags & !REG_NOSUB,
+	  tre_fill_pmatch(bt + 1, pmatch, tnfa->cflags & ~REG_NOSUB,
 			  tnfa, tags, pos);
 	  so = pmatch[bt].rm_so;
 	  eo = pmatch[bt].rm_eo;
 	  bt_len = eo - so;
 
-	  if (len < 0)
-	    {
-	      result = strncmp((char*)string + so, str_byte - 1, bt_len);
-	    }
-	  else if (len - pos < bt_len)
-	    result = 1;
-	  else
-	    result = memcmp((char*)string + so, str_byte - 1, bt_len);
+	  result = strncmp((const char*)string + so, str_byte - 1,
+				 (size_t)bt_len);
 
-	  /* We can ignore multibyte characters here because the backref
-	     string is already aligned at character boundaries. */
 	  if (result == 0)
 	    {
 	      /* Back reference matched.  Check for infinite loop. */
@@ -802,7 +793,6 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
 		empty_br_match = 1;
 	      if (empty_br_match && states_seen[trans_i->state_id])
 		{
-		  DPRINT(("  avoid loop\n"));
 		  goto backtrack;
 		}
 
@@ -810,31 +800,20 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
 
 	      /* Advance in input string and resync `prev_c', `next_c'
 		 and pos. */
-	      DPRINT(("	 back reference matched\n"));
 	      str_byte += bt_len - 1;
 	      pos += bt_len - 1;
 	      GET_NEXT_WCHAR();
-	      DPRINT(("	 pos now %d\n", pos));
 	    }
 	  else
 	    {
-	      DPRINT(("	 back reference did not match\n"));
 	      goto backtrack;
 	    }
 	}
       else
 	{
 	  /* Check for end of string. */
-	  if (len < 0)
-	    {
-	      if (next_c == L'\0')
+	  if (next_c == L'\0')
 		goto backtrack;
-	    }
-	  else
-	    {
-	      if (pos >= len)
-		goto backtrack;
-	    }
 
 	  /* Read the next character. */
 	  GET_NEXT_WCHAR();
@@ -843,49 +822,29 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
       next_state = NULL;
       for (trans_i = state; trans_i->state; trans_i++)
 	{
-	  DPRINT(("  transition %d-%d (%c-%c) %d to %d\n",
-		  trans_i->code_min, trans_i->code_max,
-		  trans_i->code_min, trans_i->code_max,
-		  trans_i->assertions, trans_i->state_id));
-	  if (trans_i->code_min <= prev_c && trans_i->code_max >= prev_c)
+	  if (trans_i->code_min <= (tre_cint_t)prev_c
+	      && trans_i->code_max >= (tre_cint_t)prev_c)
 	    {
 	      if (trans_i->assertions
 		  && (CHECK_ASSERTIONS(trans_i->assertions)
-		      /* Handle character class transitions. */
-		      || ((trans_i->assertions & ASSERT_CHAR_CLASS)
-			  && !(cflags & REG_ICASE)
-			  && !tre_isctype((tre_cint_t)prev_c, trans_i->u.class))
-		      || ((trans_i->assertions & ASSERT_CHAR_CLASS)
-			  && (cflags & REG_ICASE)
-			  && (!tre_isctype(tre_tolower((tre_cint_t)prev_c),
-					   trans_i->u.class)
-			      && !tre_isctype(tre_toupper((tre_cint_t)prev_c),
-					      trans_i->u.class)))
-		      || ((trans_i->assertions & ASSERT_CHAR_CLASS_NEG)
-			  && tre_neg_char_classes_match(trans_i->neg_classes,
-							(tre_cint_t)prev_c,
-							cflags & REG_ICASE))))
+		      || CHECK_CHAR_CLASSES(trans_i, tnfa, eflags)))
 		{
-		  DPRINT(("  assertion failed\n"));
 		  continue;
 		}
 
 	      if (next_state == NULL)
 		{
 		  /* First matching transition. */
-		  DPRINT(("  Next state is %d\n", trans_i->state_id));
 		  next_state = trans_i->state;
 		  next_tags = trans_i->tags;
 		}
 	      else
 		{
-		  /* Second mathing transition.	 We may need to backtrack here
+		  /* Second matching transition.  We may need to backtrack here
 		     to take this transition instead of the first one, so we
 		     push this transition in the backtracking stack so we can
 		     jump back here if needed. */
-		  DPRINT(("  saving state %d for backtracking\n",
-			  trans_i->state_id));
-		  BT_STACK_PUSH(pos, str_byte, str_wide, trans_i->state,
+		  BT_STACK_PUSH(pos, str_byte, 0, trans_i->state,
 				trans_i->state_id, next_c, tags, mbstate);
 		  {
 		    int *tmp;
@@ -916,11 +875,8 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
 	  /* A matching transition was not found.  Try to backtrack. */
 	  if (stack->prev)
 	    {
-	      DPRINT(("	 backtracking\n"));
-	      if (stack->item.state->assertions && ASSERT_BACKREF)
+	      if (stack->item.state->assertions & ASSERT_BACKREF)
 		{
-		  DPRINT(("  states_seen[%d] = 0\n",
-			  stack->item.state_id));
 		  states_seen[stack->item.state_id] = 0;
 		}
 
@@ -930,23 +886,10 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
 	    {
 	      /* Try starting from a later position in the input string. */
 	      /* Check for end of string. */
-	      if (len < 0)
-		{
-		  if (next_c == L'\0')
+	      if (next_c == L'\0')
 		    {
-		      DPRINT(("end of string.\n"));
 		      break;
 		    }
-		}
-	      else
-		{
-		  if (pos >= len)
-		    {
-		      DPRINT(("end of string.\n"));
-		      break;
-		    }
-		}
-	      DPRINT(("restarting from next start position\n"));
 	      next_c = next_c_start;
 #ifdef TRE_MBSTATE
 	      mbstate = mbstate_start;
@@ -956,7 +899,6 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
 	    }
 	  else
 	    {
-	      DPRINT(("finished\n"));
 	      break;
 	    }
 	}
@@ -979,7 +921,6 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
   return ret;
 }
 
-
 /***********************************************************************
  from regexec.c
 ***********************************************************************/
@@ -988,7 +929,7 @@ tre_tnfa_run_backtrack(const tre_tnfa_t *tnfa, const void *string,
    endpoint values. */
 static void
 tre_fill_pmatch(size_t nmatch, regmatch_t pmatch[], int cflags,
-		const tre_tnfa_t *tnfa, int *tags, int match_eo)
+		const tre_tnfa_t *tnfa, regoff_t *tags, regoff_t match_eo)
 {
   tre_submatch_data_t *submatch_data;
   unsigned int i, j;
@@ -998,7 +939,6 @@ tre_fill_pmatch(size_t nmatch, regmatch_t pmatch[], int cflags,
   if (match_eo >= 0 && !(cflags & REG_NOSUB))
     {
       /* Construct submatch offsets from the tags. */
-      DPRINT(("end tag = t%d = %d\n", tnfa->end_tag, match_eo));
       submatch_data = tnfa->submatch_data;
       while (i < tnfa->num_submatches && i < nmatch)
 	{
@@ -1017,9 +957,6 @@ tre_fill_pmatch(size_t nmatch, regmatch_t pmatch[], int cflags,
 	  if (pmatch[i].rm_so == -1 || pmatch[i].rm_eo == -1)
 	    pmatch[i].rm_so = pmatch[i].rm_eo = -1;
 
-	  DPRINT(("pmatch[%d] = {t%d = %d, t%d = %d}\n", i,
-		  submatch_data[i].so_tag, pmatch[i].rm_so,
-		  submatch_data[i].eo_tag, pmatch[i].rm_eo));
 	  i++;
 	}
       /* Reset all submatches that are not within all of their parent
@@ -1035,7 +972,6 @@ tre_fill_pmatch(size_t nmatch, regmatch_t pmatch[], int cflags,
 	  if (parents != NULL)
 	    for (j = 0; parents[j] >= 0; j++)
 	      {
-		DPRINT(("pmatch[%d] parent %d\n", i, parents[j]));
 		if (pmatch[i].rm_so < pmatch[parents[j]].rm_so
 		    || pmatch[i].rm_eo > pmatch[parents[j]].rm_eo)
 		  pmatch[i].rm_so = pmatch[i].rm_eo = -1;
@@ -1057,19 +993,17 @@ tre_fill_pmatch(size_t nmatch, regmatch_t pmatch[], int cflags,
   Wrapper functions for POSIX compatible regexp matching.
 */
 
-static int
-tre_match(const tre_tnfa_t *tnfa, const void *string, size_t len,
-	  size_t nmatch, regmatch_t pmatch[], int eflags)
+int
+regexec(const regex_t *restrict preg, const char *restrict string,
+	  size_t nmatch, regmatch_t pmatch[restrict], int eflags)
 {
+  tre_tnfa_t *tnfa = (void *)preg->TRE_REGEX_T_FIELD;
   reg_errcode_t status;
-  int *tags = NULL, eo;
+  regoff_t *tags = NULL, eo;
+  if (tnfa->cflags & REG_NOSUB) nmatch = 0;
   if (tnfa->num_tags > 0 && nmatch > 0)
     {
-#ifdef TRE_USE_ALLOCA
-      tags = alloca(sizeof(*tags) * tnfa->num_tags);
-#else /* !TRE_USE_ALLOCA */
       tags = xmalloc(sizeof(*tags) * tnfa->num_tags);
-#endif /* !TRE_USE_ALLOCA */
       if (tags == NULL)
 	return REG_ESPACE;
     }
@@ -1078,30 +1012,18 @@ tre_match(const tre_tnfa_t *tnfa, const void *string, size_t len,
   if (tnfa->have_backrefs)
     {
       /* The regex has back references, use the backtracking matcher. */
-      status = tre_tnfa_run_backtrack(tnfa, string, len, tags, eflags, &eo);
+      status = tre_tnfa_run_backtrack(tnfa, string, tags, eflags, &eo);
     }
   else
     {
       /* Exact matching, no back references, use the parallel matcher. */
-      status = tre_tnfa_run_parallel(tnfa, string, len, tags, eflags, &eo);
+      status = tre_tnfa_run_parallel(tnfa, string, tags, eflags, &eo);
     }
 
   if (status == REG_OK)
     /* A match was found, so fill the submatch registers. */
     tre_fill_pmatch(nmatch, pmatch, tnfa->cflags, tnfa, tags, eo);
-#ifndef TRE_USE_ALLOCA
   if (tags)
     xfree(tags);
-#endif /* !TRE_USE_ALLOCA */
   return status;
 }
-
-int
-regexec(const regex_t *preg, const char *str,
-	size_t nmatch, regmatch_t pmatch[], int eflags)
-{
-  return tre_match((void *)preg->TRE_REGEX_T_FIELD, str, -1,
-                   nmatch, pmatch, eflags);
-}
-
-/* EOF */

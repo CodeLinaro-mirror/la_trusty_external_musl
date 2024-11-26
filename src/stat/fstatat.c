@@ -1,10 +1,9 @@
 #include <sys/stat.h>
 #include "syscall.h"
-#include "libc.h"
 
-int fstatat(int fd, const char *path, struct stat *buf, int flag)
+int fstatat(int fd, const char *restrict path, struct stat *restrict buf, int flag)
 {
-	return syscall4(__NR_fstatat64, fd, (long)path, (long)buf, flag);
+	return syscall(SYS_fstatat, fd, path, buf, flag);
 }
 
-LFS64(fstatat);
+weak_alias(fstatat, fstatat64);

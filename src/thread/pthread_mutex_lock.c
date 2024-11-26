@@ -1,9 +1,12 @@
 #include "pthread_impl.h"
 
-int pthread_mutex_lock(pthread_mutex_t *m)
+int __pthread_mutex_lock(pthread_mutex_t *m)
 {
-	int r;
-	while ((r=pthread_mutex_trylock(m)) == EBUSY)
-		__wait(&m->__lock, &m->__waiters, 1, 0);
-	return r;
+	if ((m->_m_type&15) == PTHREAD_MUTEX_NORMAL
+	    && !a_cas(&m->_m_lock, 0, EBUSY))
+		return 0;
+
+	return __pthread_mutex_timedlock(m, 0);
 }
+
+weak_alias(__pthread_mutex_lock, pthread_mutex_lock);

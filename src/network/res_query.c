@@ -1,20 +1,12 @@
+#include <resolv.h>
 #include <netdb.h>
-#include "__dns.h"
 
 int res_query(const char *name, int class, int type, unsigned char *dest, int len)
 {
-	if (class != 1 || len < 512)
-		return -1;
-	switch(__dns_doqueries(dest, name, &type, 1)) {
-	case EAI_NONAME:
-		h_errno = HOST_NOT_FOUND;
-		return -1;
-	case EAI_AGAIN:
-		h_errno = TRY_AGAIN;
-		return -1;
-	case EAI_FAIL:
-		h_errno = NO_RECOVERY;
-		return -1;
-	}
-	return 512;
+	unsigned char q[280];
+	int ql = __res_mkquery(0, name, class, type, 0, 0, 0, q, sizeof q);
+	if (ql < 0) return ql;
+	return __res_send(q, ql, dest, len);
 }
+
+weak_alias(res_query, res_search);

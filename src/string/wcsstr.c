@@ -1,18 +1,11 @@
 #include <wchar.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdint.h>
 
-static wchar_t *naive_wcsstr(const wchar_t *h, const wchar_t *n)
-{
-	size_t i;
-	for (i=0; n[i] && h[i]; i++)
-	for (   ; n[i] != h[i]; h++, i=0);
-	return n[i] ? 0 : (wchar_t *)h;
-}
-
+#ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
+#ifndef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
+#endif
 
 static wchar_t *twoway_wcsstr(const wchar_t *h, const wchar_t *n)
 {
@@ -95,13 +88,13 @@ static wchar_t *twoway_wcsstr(const wchar_t *h, const wchar_t *n)
 		}
 		/* Compare left half */
 		for (k=ms+1; k>mem && n[k-1] == h[k-1]; k--);
-		if (k == mem) return (wchar_t *)h;
+		if (k <= mem) return (wchar_t *)h;
 		h += p;
 		mem = mem0;
 	}
 }
 
-wchar_t *wcsstr(const wchar_t *h, const wchar_t *n)
+wchar_t *wcsstr(const wchar_t *restrict h, const wchar_t *restrict n)
 {
 	/* Return immediately on empty needle or haystack */
 	if (!n[0]) return (wchar_t *)h;
@@ -111,7 +104,6 @@ wchar_t *wcsstr(const wchar_t *h, const wchar_t *n)
 	h = wcschr(h, *n);
 	if (!h || !n[1]) return (wchar_t *)h;
 	if (!h[1]) return 0;
-	if (!n[2] || !n[3] || !n[4]) return naive_wcsstr(h, n);
 
 	return twoway_wcsstr(h, n);
 }

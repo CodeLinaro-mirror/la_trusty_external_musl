@@ -1,8 +1,13 @@
 #include <unistd.h>
-#include <termios.h>
+#include <errno.h>
+#include <sys/ioctl.h>
+#include "syscall.h"
 
 int isatty(int fd)
 {
-	struct termios t;
-	return tcgetattr(fd, &t) == 0;
+	struct winsize wsz;
+	unsigned long r = syscall(SYS_ioctl, fd, TIOCGWINSZ, &wsz);
+	if (r == 0) return 1;
+	if (errno != EBADF) errno = ENOTTY;
+	return 0;
 }

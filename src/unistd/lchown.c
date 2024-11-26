@@ -1,7 +1,12 @@
 #include <unistd.h>
+#include <fcntl.h>
 #include "syscall.h"
 
 int lchown(const char *path, uid_t uid, gid_t gid)
 {
-	return syscall3(__NR_lchown32, (long)path, uid, gid);
+#ifdef SYS_lchown
+	return syscall(SYS_lchown, path, uid, gid);
+#else
+	return syscall(SYS_fchownat, AT_FDCWD, path, uid, gid, AT_SYMLINK_NOFOLLOW);
+#endif
 }

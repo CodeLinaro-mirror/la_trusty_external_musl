@@ -1,21 +1,19 @@
 #include <fcntl.h>
-#include <unistd.h>
 #include <stdarg.h>
 #include "syscall.h"
-#include "libc.h"
 
 int openat(int fd, const char *filename, int flags, ...)
 {
-	int r;
-	mode_t mode;
-	va_list ap;
-	va_start(ap, flags);
-	mode = va_arg(ap, mode_t);
-	va_end(ap);
-	CANCELPT_BEGIN;
-	r = syscall4(__NR_openat, fd, (long)filename, flags|O_LARGEFILE, mode);
-	CANCELPT_END;
-	return r;
+	mode_t mode = 0;
+
+	if ((flags & O_CREAT) || (flags & O_TMPFILE) == O_TMPFILE) {
+		va_list ap;
+		va_start(ap, flags);
+		mode = va_arg(ap, mode_t);
+		va_end(ap);
+	}
+
+	return syscall_cp(SYS_openat, fd, filename, flags|O_LARGEFILE, mode);
 }
 
-LFS64(openat);
+weak_alias(openat, openat64);

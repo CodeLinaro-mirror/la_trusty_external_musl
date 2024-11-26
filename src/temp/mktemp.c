@@ -1,29 +1,30 @@
+#define _GNU_SOURCE
 #include <string.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <errno.h>
-#include "libc.h"
+#include <sys/stat.h>
 
 char *mktemp(char *template)
 {
-	static int lock;
-	static int index;
-	int l = strlen(template);
+	size_t l = strlen(template);
+	int retries = 100;
+	struct stat st;
 
-	if (l < 6 || strcmp(template+l-6, "XXXXXX")) {
+	if (l < 6 || memcmp(template+l-6, "XXXXXX", 6)) {
 		errno = EINVAL;
-		return NULL;
+		*template = 0;
+		return template;
 	}
-	LOCK(&lock);
-	for (; index < 1000000; index++) {
-		snprintf(template+l-6, 6, "%06d", index);
-		if (access(template, F_OK) != 0) {
-			UNLOCK(&lock);
+
+	do {
+		__randname(template+l-6);
+		if (stat(template, &st)) {
+			if (errno != ENOENT) *template = 0;
 			return template;
 		}
-	}
-	UNLOCK(&lock);
-	return NULL;	
+	} while (--retries);
+
+	*template = 0;
+	errno = EEXIST;
+	return template;
 }

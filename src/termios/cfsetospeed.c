@@ -1,7 +1,7 @@
+#define _BSD_SOURCE
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <errno.h>
-#include "libc.h"
 
 int cfsetospeed(struct termios *tio, speed_t speed)
 {

@@ -1,9 +1,16 @@
 #include <time.h>
-#include <sys/times.h>
+#include <limits.h>
 
-/* this function assumes 100 hz linux and corrects for it */
 clock_t clock()
 {
-	struct tms tms;
-	return (unsigned long)times(&tms)*10000;
+	struct timespec ts;
+
+	if (__clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts))
+		return -1;
+
+	if (ts.tv_sec > LONG_MAX/1000000
+	 || ts.tv_nsec/1000 > LONG_MAX-1000000*ts.tv_sec)
+		return -1;
+
+	return ts.tv_sec*1000000 + ts.tv_nsec/1000;
 }

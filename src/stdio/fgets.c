@@ -1,34 +1,50 @@
 #include "stdio_impl.h"
+#include <string.h>
 
+#ifndef MIN
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
+#endif
 
-char *fgets(char *s, int n, FILE *f)
+char *fgets(char *restrict s, int n, FILE *restrict f)
 {
 	char *p = s;
 	unsigned char *z;
 	size_t k;
-
-	if (!n--) return 0;
+	int c;
 
 	FLOCK(f);
 
-	while (n && !feof(f)) {
-		z = memchr(f->rpos, '\n', f->rend - f->rpos);
-		k = z ? z - f->rpos + 1 : f->rend - f->rpos;
-		k = MIN(k, n);
-		memcpy(p, f->rpos, k);
-		f->rpos += k;
-		p += k;
-		n -= k;
-		if (z) break;
-		__underflow(f);
+	if (n--<=1) {
+		f->mode |= f->mode-1;
+		FUNLOCK(f);
+		if (n) return 0;
+		*s = 0;
+		return s;
 	}
-	*p = 0;
-	if (ferror(f)) p = s;
+
+	while (n) {
+		if (f->rpos != f->rend) {
+			z = memchr(f->rpos, '\n', f->rend - f->rpos);
+			k = z ? z - f->rpos + 1 : f->rend - f->rpos;
+			k = MIN(k, n);
+			memcpy(p, f->rpos, k);
+			f->rpos += k;
+			p += k;
+			n -= k;
+			if (z || !n) break;
+		}
+		if ((c = getc_unlocked(f)) < 0) {
+			if (p==s || !feof(f)) s = 0;
+			break;
+		}
+		n--;
+		if ((*p++ = c) == '\n') break;
+	}
+	if (s) *p = 0;
 
 	FUNLOCK(f);
 
-	return (p == s) ? 0 : s;
+	return s;
 }
 
 weak_alias(fgets, fgets_unlocked);

@@ -1,9 +1,9 @@
-#define SYSCALL_STANDALONE
+#include <sys/sysinfo.h>
 #include "syscall.h"
 
-struct sysinfo;
-
-int sysinfo(struct sysinfo *info)
+int __lsysinfo(struct sysinfo *info)
 {
-	return syscall1(__NR_sysinfo, (long)info);
+	return syscall(SYS_sysinfo, info);
 }
+
+weak_alias(__lsysinfo, sysinfo);

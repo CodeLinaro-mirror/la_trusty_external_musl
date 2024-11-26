@@ -1,7 +1,12 @@
-#define SYSCALL_RETURN_ERRNO
 #include "pthread_impl.h"
+#include "lock.h"
 
 int pthread_kill(pthread_t t, int sig)
 {
-	return syscall3(__NR_tgkill, t->pid, t->tid, sig);
+	int r;
+	LOCK(t->killlock);
+	r = t->tid ? -__syscall(SYS_tkill, t->tid, sig)
+		: (sig+0U >= _NSIG ? EINVAL : 0);
+	UNLOCK(t->killlock);
+	return r;
 }

@@ -1,9 +1,10 @@
-#include "syscall.h"
+#include "pthread_impl.h"
 
-int __set_thread_area(unsigned long *desc)
+int __set_thread_area(void *p)
 {
-	if (syscall1(__NR_set_thread_area, (long)desc) < 0)
-		return -1;
-	__asm__ __volatile__ ( "movw %w0,%%gs" : : "r"(desc[0]*8+3) );
-	return 0;
+#ifdef SYS_set_thread_area
+	return __syscall(SYS_set_thread_area, p);
+#else
+	return -ENOSYS;
+#endif
 }
