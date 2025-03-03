@@ -26,7 +26,7 @@
 
 static __inline uint16_t __bswap16(uint16_t __x)
 {
-	return __x<<8 | __x>>8;
+	return ((uint16_t)(__x<<8)) | ((uint16_t)(__x>>8));
 }
 
 static __inline uint32_t __bswap32(uint32_t __x)
