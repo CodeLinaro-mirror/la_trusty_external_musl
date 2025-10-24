@@ -1048,6 +1048,9 @@ typedef struct {
 #ifdef HWASAN_ENABLED
 #define TRUSTY_AT_HWASAN_SHADOW	1000000
 #endif
+#define TRUSTY_AT_INSTANCE_ID_PTR	1000001
+#define TRUSTY_AT_INSTANCE_ID_SIZE	1000002
+#define TRUSTY_AT_SELF_PEER_IDS		1000003
 
 typedef struct {
   Elf32_Word n_namesz;
