@@ -10,13 +10,15 @@
 
 #include "crt_arch.h"
 
-#ifndef GETFUNCSYM
-#define GETFUNCSYM(fp, sym, got) do { \
-	hidden void sym(); \
-	static void (*static_func_ptr)() = sym; \
+#ifdef GETFUNCSYM
+#define GET_DLS2_SYM(fp, sym, got) GETFUNCSYM(fp, sym, got)
+#else /* ndef GETFUNCSYM */
+#define GET_DLS2_SYM(fp, sym, got) do { \
+	hidden void sym(unsigned char *, size_t *); \
+	static void (*static_func_ptr)(unsigned char *base, size_t *sp) = sym; \
 	__asm__ __volatile__ ( "" : "+m"(static_func_ptr) : : "memory"); \
 	*(fp) = static_func_ptr; } while(0)
-#endif
+#endif /* ndef GETFUNCSYM */
 
 hidden void _dlstart_c(size_t *sp, size_t *dynv)
 {
@@ -143,6 +145,6 @@ hidden void _dlstart_c(size_t *sp, size_t *dynv)
 #endif
 
 	stage2_func dls2;
-	GETFUNCSYM(&dls2, __dls2, base+dyn[DT_PLTGOT]);
+	GET_DLS2_SYM(&dls2, __dls2, base+dyn[DT_PLTGOT]);
 	dls2((void *)base, sp);
 }
